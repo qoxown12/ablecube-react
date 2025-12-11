@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+
+export PREFIX=/usr
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# upstream releases include a pre-built dist/, rebuild it
+	rm -fr dist/
+	# HACK: names for additional tarballs can't contain '_', so we name it just "orig-node"
+	ln -fs node node_modules
+	NODE_ENV=production ./build.js
+
+execute_after_dh_auto_clean:
+	rm -f po/LINGUAS
+	if [ -L node_modules ]; then rm node_modules; fi
+
+override_dh_auto_test:
+	# don't call `make check`, these are integration tests

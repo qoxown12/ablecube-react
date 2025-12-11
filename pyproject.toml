@@ -1,0 +1,67 @@
+[tool.mypy]
+follow_imports = 'silent'  # https://github.com/python-lsp/pylsp-mypy/issues/81
+scripts_are_modules = true  # allow checking all scripts in one invocation
+explicit_package_bases = true
+mypy_path = 'test/common:bots'
+exclude = [
+    "bots"
+]
+strict = true
+warn_return_any = false # https://github.com/python/mypy/issues/17380
+
+[tool.pyright]
+strict = ["**"]
+extraPaths = ["test/common", "bots"]
+
+[tool.ruff]
+exclude = [
+    ".git/",
+    "modules/",
+    "node_modules/",
+]
+line-length = 118
+preview = true
+src = []
+
+[tool.ruff.lint]
+select = [
+    "A",       # flake8-builtins
+    "B",       # flake8-bugbear
+    "C4",      # flake8-comprehensions
+    "D300",    # pydocstyle: Forbid ''' in docstrings
+    "DTZ",     # flake8-datetimez
+    "E",       # pycodestyle
+    "EXE",     # flake8-executable
+    "F",       # pyflakes
+    "FBT",     # flake8-boolean-trap
+    "G",       # flake8-logging-format
+    "I",       # isort
+    "ICN",     # flake8-import-conventions
+    "ISC",     # flake8-implicit-str-concat
+    "PLE",     # pylint errors
+    "PGH",     # pygrep-hooks
+    "RSE",     # flake8-raise
+    "RUF",     # ruff rules
+    "T10",     # flake8-debugger
+    "TC",      # flake8-type-checking
+    "UP032",   # f-string
+    "W",       # warnings (mostly whitespace)
+    "YTT",     # flake8-2020
+]
+ignore = [
+    "RUF001", # String contains ambiguous `’`
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.vulture]
+ignore_names = [
+   "setUpClass",
+   "test[A-Z0-9]*",
+]
+
+[tool.codespell]
+skip = './node_modules,./dist'
+ignore-words-list = 'doubleclick'

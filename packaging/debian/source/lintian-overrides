@@ -1,0 +1,2 @@
+# source contains NPM modules required for building
+cockpit-files source: source-is-missing *node/*
