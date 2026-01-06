@@ -1,0 +1,83 @@
+# Enable RPM builds and running integration tests in PRs through https://packit.dev/
+# To use this, enable Packit-as-a-service in GitHub: https://packit.dev/docs/packit-as-a-service/
+# See https://packit.dev/docs/configuration/ for the format of this file
+
+specfile_path: cockpit-files.spec
+# use the nicely formatted release description from our upstream release, instead of git shortlog
+copy_upstream_release_description: true
+
+srpm_build_deps:
+  - jq
+  - make
+  - nodejs
+
+actions:
+  post-upstream-clone:
+    - make node-cache dist
+
+  fix-spec-file:
+    # our locally built tarballs are not on the upstream releases page, point to the local files
+    sed -i 's|^\(Source[0-9]*:\s*\).*\/|\1|' cockpit-files.spec
+
+jobs:
+  - job: tests
+    trigger: pull_request
+    targets: &test_targets
+      - fedora-42
+      - fedora-43
+      - fedora-rawhide
+      - fedora-latest-stable-aarch64
+      - centos-stream-9-x86_64
+      - centos-stream-10
+
+  - job: copr_build
+    trigger: pull_request
+    targets: *test_targets
+
+  - job: copr_build
+    trigger: commit
+    branch: "^main$"
+    owner: "@cockpit"
+    project: "main-builds"
+    preserve_project: True
+
+  - job: copr_build
+    trigger: release
+    owner: "@cockpit"
+    project: "cockpit-preview"
+    preserve_project: True
+    actions:
+      post-upstream-clone: make cockpit-files.spec
+      # HACK: tarball for releases (copr_build, koji, etc.), copying spec's Source0; this
+      # really should be the default, see https://github.com/packit/packit-service/issues/1505
+      fix-spec-file:
+        - sh -exc "curl -L --fail -O https://github.com/cockpit-project/cockpit-files/releases/download/${PACKIT_PROJECT_VERSION}/${PACKIT_PROJECT_NAME_VERSION}.tar.xz"
+        - sh -exc "curl -L --fail -O https://github.com/cockpit-project/cockpit-files/releases/download/${PACKIT_PROJECT_VERSION}/cockpit-files-node-${PACKIT_PROJECT_VERSION}.tar.xz"
+
+  - job: copr_build
+    trigger: commit
+    branch: "^main$"
+    owner: "@cockpit"
+    project: "main-builds"
+    preserve_project: True
+
+  - job: propose_downstream
+    trigger: release
+    dist_git_branches:
+      - fedora-42
+      - fedora-43
+      - fedora-development
+
+  - job: koji_build
+    trigger: commit
+    dist_git_branches:
+      - fedora-42
+      - fedora-43
+      - fedora-development
+
+  - job: bodhi_update
+    trigger: commit
+    dist_git_branches:
+      # rawhide updates are created automatically
+      - fedora-42
+      - fedora-43

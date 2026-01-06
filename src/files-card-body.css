@@ -1,0 +1,333 @@
+.fileview {
+    --icon-size: 32px;
+    border-collapse: collapse;
+    inline-size: 100%;
+    margin: var(--pf-t--global--spacer--sm);
+    line-height: var(--pf-t--global--font--line-height--body);
+    font-family: var(--pf-t--global--font--family--body);
+    font-size: var(--pf-t--global--font--size--md);
+    overflow: auto;
+
+    th {
+        text-align: start;
+    }
+
+    tbody tr {
+        --color-folder: var(--pf-t--global--color--brand--default);
+        --color-icon: var(--pf-t--global--icon--color--subtle);
+        --focus-width: 1px;
+        --focus-solidity: solid;
+
+        /* We're handling focus state with focus-within below the focus ring at the tr */
+        a:focus {
+            outline: none;
+        }
+
+        /* Turn focus ring back on at the tr level for selected and focused items */
+        &.row-selected,
+        &.row-selected:hover,
+        &:focus-within {
+            outline: var(--focus-width) var(--focus-solidity) var(--pf-t--global--color--brand--clicked);
+        }
+
+        /* Hovered items, for both views */
+        &:hover {
+            /* Propagate the hovering via variables to the link and cursor */
+            --pf-t--global--color--brand--default: var(--pf-t--global--color--brand--hover);
+            --pf-t--global--text--color--link--default: var(--pf-t--global--text--color--link--hover);
+            /* Show an interactive cursor */
+            cursor: pointer;
+            /* Standard PF hover color */
+            background-color: var(--pf-t--global--background--color--primary--hover);
+        }
+
+        /* When focused, show thicker ring and darker colors for icons */
+        &:focus-within {
+            --focus-width: 2px;
+            --color-folder: var(--pf-t--global--color--brand--clicked);
+            --color-icon: var(--pf-t--global--icon--color--brand--clicked);
+        }
+
+        /* Selected icons should have light blue selected color
+         * (to distinguish from hovered items)
+         */
+        &.row-selected,
+        &.row-selected:hover {
+            --pf-t--global--text--color--link--default: var(--pf-t--global--text--color--link--hover);
+            background-color: color-mix(
+                in srgb,
+                var(--pf-t--global--text--color--link--default) 15%,
+                var(--pf-t--global--background--color--primary--default)
+            );
+        }
+    }
+
+    .item-name {
+        /* Bump up the font size to standard for the filenames */
+        a {
+            font-size: var(--pf-t--global--font--size--md);
+        }
+
+        a::before {
+            /* content-visibility: auto; */
+            aspect-ratio: 1;
+            background-color: var(--color-icon);
+            block-size: var(--icon-size);
+            content: '';
+            mask-repeat: no-repeat;
+            mask-position: center;
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M1468 380c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22zm384 1528V640H992c-53 0-96-43-96-96V128H128v1536z"/></svg>');
+        }
+    }
+
+    .symlink {
+        --symlink-size: 16px;
+
+        a {
+            position: relative;
+
+            &::after {
+                aspect-ratio: 1;
+                /* Reuse default icon color */
+                background-color: var(--color-icon);
+                block-size: var(--symlink-size);
+                content: '';
+                mask-repeat: no-repeat;
+                mask-position: center;
+                mask-image: url('data:image/svg+xml,%3Csvg title="symlink" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"%3E%3Cpath d="M81 81a248 248 0 1 1 350 350A248 248 0 0 1 81 81zm81 122 104-3-129 130c-9 9-9 24 0 33l12 12c9 9 24 9 33 0l130-129-3 104c0 14 11 25 24 25h16c13 0 24-11 24-24V163c0-13-11-24-24-24H161c-13 0-24 11-24 24v16c0 13 11 24 25 24z"/%3E%3C/svg%3E');
+            }
+        }
+    }
+
+    &.view-grid .symlink a::after {
+        --symlink-size: 22px;
+        inset-block-start: var(--pf-t--global--spacer--sm);
+        inset-inline-end: var(--pf-t--global--spacer--md);
+        position: absolute;
+    }
+
+    &.view-details .symlink a::after {
+        display: inline-block;
+        inset-block-start: -1px;
+        margin-inline-start: var(--pf-t--global--spacer--sm);
+        position: relative;
+        vertical-align: middle;
+    }
+
+    tr.folder {
+        .item-name a::before {
+            background-color: var(--color-folder);
+            mask-image: url('data:image/svg+xml,<svg class="pf-v6-svg" viewBox="0 0 512 512" fill="currentColor" aria-hidden="true" role="img" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg"><path d="M464 128H272l-64-64H48C21.49 64 0 85.49 0 112v288c0 26.51 21.49 48 48 48h416c26.51 0 48-21.49 48-48V176c0-26.51-21.49-48-48-48z"></path></svg>');
+        }
+    }
+
+    tr.archive-file {
+        .item-name a::before {
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M640 384V256H512v128zm128 128V384H640v128zM640 640V512H512v128zm128 128V640H640v128zm700-388c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22m384 1528V640H992c-53 0-96-43-96-96V128H768v128H640V128H128v1536zM781 943c85 287 107 349 107 349 5 17 8 34 8 52 0 111-108 192-256 192s-256-81-256-192c0-18 3-35 8-52 0 0 21-62 120-396V768h128v128h79c29 0 54 19 62 47m-141 465c71 0 128-29 128-64s-57-64-128-64-128 29-128 64 57 64 128 64"/></svg>');
+        }
+    }
+
+    tr.audio-file {
+        .item-name a::before {
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M1468 380c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22m384 1528V640H992c-53 0-96-43-96-96V128H128v1536zM620 850c12 5 20 17 20 30v544c0 13-8 25-20 30-4 1-8 2-12 2-8 0-16-3-23-9l-166-167H288c-18 0-32-14-32-32v-192c0-18 14-32 32-32h131l166-167c10-9 23-12 35-7m417 689c19 0 37-8 50-24 83-102 129-231 129-363s-46-261-129-363c-22-28-63-32-90-10-28 23-32 63-9 91 65 80 100 178 100 282s-35 202-100 282c-23 28-19 68 9 90 12 10 26 15 40 15m-211-148c17 0 34-7 47-20 56-60 87-137 87-219s-31-159-87-219c-24-26-65-27-91-3-25 24-27 65-2 91 33 36 52 82 52 131s-19 95-52 131c-25 26-23 67 2 91 13 11 29 17 44 17"/></svg>');
+        }
+    }
+
+    tr.code-file {
+        .item-name a::before {
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M1468 380c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22m384 1528V640H992c-53 0-96-43-96-96V128H128v1536zM480 768c11-14 31-17 45-6l51 38c14 11 17 31 6 45l-182 243 182 243c11 14 8 34-6 45l-51 38c-14 11-34 8-45-6l-226-301c-8-11-8-27 0-38zm802 301c8 11 8 27 0 38l-226 301c-11 14-31 17-45 6l-51-38c-14-11-17-31-6-45l182-243-182-243c-11-14-8-34 6-45l51-38c14-11 34-8 45 6zm-620 461c-18-3-29-20-26-37l138-831c3-18 20-29 37-26l63 10c18 3 29 20 26 37l-138 831c-3 18-20 29-37 26z"/></svg>');
+        }
+    }
+
+    tr.image-file {
+        .item-name a::before {
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M1468 380c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22m384 1528V640H992c-53 0-96-43-96-96V128H128v1536zm-128-448v320H256v-192l192-192 128 128 384-384zm-832-192c-106 0-192-86-192-192s86-192 192-192 192 86 192 192-86 192-192 192"/></svg>');
+        }
+    }
+
+    tr.text-file {
+        .item-name a::before {
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M1468 380c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22m384 1528V640H992c-53 0-96-43-96-96V128H128v1536zM384 800c0-18 14-32 32-32h704c18 0 32 14 32 32v64c0 18-14 32-32 32H416c-18 0-32-14-32-32zm736 224c18 0 32 14 32 32v64c0 18-14 32-32 32H416c-18 0-32-14-32-32v-64c0-18 14-32 32-32zm0 256c18 0 32 14 32 32v64c0 18-14 32-32 32H416c-18 0-32-14-32-32v-64c0-18 14-32 32-32z"/></svg>');
+        }
+    }
+
+    tr.video-file {
+        .item-name a::before {
+            mask-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1536 1792"><path d="M1468 380c37 37 68 111 68 164v1152c0 53-43 96-96 96H96c-53 0-96-43-96-96V96C0 43 43 0 96 0h896c53 0 127 31 164 68zm-444-244v376h376c-6-17-15-34-22-41l-313-313c-7-7-24-16-41-22m384 1528V640H992c-53 0-96-43-96-96V128H128v1536zM768 768c70 0 128 58 128 128v384c0 70-58 128-128 128H384c-70 0-128-58-128-128V896c0-70 58-128 128-128zm492 2c12 5 20 17 20 30v576c0 13-8 25-20 30-4 1-8 2-12 2-8 0-17-3-23-9l-265-266v-90l265-266c6-6 15-9 23-9 4 0 8 1 12 2"/></svg>');
+        }
+    }
+
+    a:not(:hover, :focus) {
+        color: inherit;
+    }
+
+    &.view-details .item-name a::before {
+        display: inline-block;
+        margin-inline-end: var(--pf-t--global--spacer--sm);
+        /* FIXME: Figure out why there's an offset */
+        transform: translateY(3px);
+    }
+
+    &.view-grid .item-name a {
+        display: block;
+
+        &::before {
+            display: block;
+            margin-inline: auto;
+            margin-block-end: var(--pf-t--global--spacer--sm);
+        }
+    }
+
+    &.view-details {
+        --icon-size: 16px;
+        inline-size: 100%;
+        margin: 0;
+
+        th, td {
+            padding: var(--pf-t--global--spacer--sm);
+            border-block-start: none;
+        }
+
+        @media screen and (max-width: calc(-1px + 48rem)) {
+            tr:nth-child(even) {
+                background-color: var(--pf-t--global--background--color--secondary--default);
+            }
+
+            .col-folder, .item-name {
+                text-align: end;
+            }
+        }
+
+        .col-size, .item-size,
+        .col-date, .item-date,
+        .col-owner, .item-owner,
+        .col-perms, .item-perms {
+            text-align: end;
+
+            /* To fix mobile view table */
+            @media screen and (min-width: 48rem) {
+                inline-size: 12ch;
+            }
+        }
+
+
+        /* Remove the extra padding on the end of the column and button, as the icon has padding already */
+        .col-size, .col-date,
+        .col-perms, .col-owner {
+            &, .pf-v6-c-table__button {
+                padding-inline-end: 0;
+            }
+
+            .pf-v6-c-table__button {
+                inline-size: 100%;
+                justify-content: end;
+            }
+        }
+
+        @media screen and (min-width: 48rem) {
+            :first-child:is(td, th) {
+                padding-inline-start: var(--pf-t--global--spacer--lg);
+            }
+
+            :last-child:is(td, th):not(.pf-v6-c-table__sort) {
+                padding-inline-end: var(--pf-t--global--spacer--lg);
+            }
+        }
+    }
+
+    &.view-grid {
+        --icon-size: 64px;
+        display: contents;
+
+        thead {
+            display: none;
+        }
+
+        tbody {
+            align-items: stretch;
+            display: grid;
+            /* As we're using justify-content: space-between, this is the minimum gap horizontally; */
+            gap: var(--pf-t--global--spacer--sm);
+            grid-template-columns: repeat(auto-fill, minmax(8rem,1fr));
+            justify-content: space-between;
+            margin: var(--pf-t--global--spacer--sm);
+
+            tr {
+                border-radius: var(--pf-t--global--border--radius--small);
+            }
+        }
+
+        tr {
+            display: block;
+            /* Override default PF padding */
+            padding: 0;
+
+            td {
+                display: block;
+                text-align: center;
+                word-break: break-all;
+                /* Override default PF padding */
+                padding: 0;
+
+                a {
+                    padding: var(--pf-t--global--spacer--sm);
+                }
+
+                &:not(:last-child) a {
+                    padding-block-end: 0;
+                }
+
+                + td {
+                    padding-block-end: var(--pf-t--global--spacer--sm);
+                }
+            }
+
+            .item-num {
+                display: none;
+            }
+
+            .item-size {
+                font-size: var(--pf-t--global--font--size--xs);
+                color: var(--pf-t--global--text--color--subtle);
+            }
+
+            .item-date, .item-perms, .item-owner {
+                display: none;
+            }
+
+            &:hover {
+                outline: 1px solid var(--pf-t--global--color--brand--clicked);
+            }
+        }
+        @media screen and (max-width: calc(-1px + 48rem)) {
+            .pf-v6-c-table__th::before, .pf-v6-c-table__td::before {
+                content: none;
+            }
+        }
+    }
+
+    .pf-v6-c-table__thead {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 1;
+
+        th {
+            background-color: var(--pf-t--global--background--color--primary--default);
+        }
+    }
+}
+
+.pf-v6-c-tooltip .permissions-tooltip-text {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: var(--pf-t--global--spacer--sm);
+    text-align: start;
+}
+
+/* use all available space when there is not enough files to fill the whole view
+ * so drag&drop works in empty space
+ */
+.fileview-wrapper {
+    block-size: 100%;
+    overflow: auto;
+}
