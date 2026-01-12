@@ -19,6 +19,7 @@
 /cockpit-*.tar.xz
 /cockpit-files.spec
 /dist/
+/node_modules/
 /metafile.json
 /package-lock.json
 /pkg/
