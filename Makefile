@@ -4,7 +4,7 @@ RPM_NAME := cockpit-$(PACKAGE_NAME)
 VERSION := $(shell T=$$(git describe 2>/dev/null) || T=1; echo $$T | tr '-' '.')
 PREFIX ?= /usr/local
 
-APPSTREAMFILE = org.cockpit_project.$(PACKAGE_NAME).metainfo.xml
+APPSTREAMFILE = io.ablecloud.ablestack.metainfo.xml
 
 # test stamp files
 NODE_MODULES_TEST = package-lock.json
@@ -73,7 +73,7 @@ po/LINGUAS:
 #
 # Build
 #
-$(DIST_TEST): $(COCKPIT_REPO_STAMP) $(shell find src/ -type f) package.json build.js
+$(DIST_TEST): $(COCKPIT_REPO_STAMP) $(shell find src/ -type f) package.json build.js $(shell find po -name '*.po')
 	npm install
 	NODE_ENV=$(NODE_ENV) ./build.js
 
@@ -114,7 +114,7 @@ dist: $(TARFILE)
 $(TARFILE): $(DIST_TEST)
 	tar --xz $(TAR_ARGS) -cf $(TARFILE) \
 		--transform 's,^,$(RPM_NAME)/,' \
-		$$(git ls-files | grep -v node_modules) dist/
+		$$(git ls-files | grep -v node_modules --exclude=rpmbuild) dist/
 
 #
 # Clean

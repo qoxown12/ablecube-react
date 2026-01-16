@@ -10,7 +10,9 @@ SPEC_NAME=ablestack-react.spec
 # 명시적 버전 (제품/배포용 권장)
 VERSION=1.0.0
 
-RPMTOP="$HOME/rpmbuild"
+# 현재 스크립트 위치를 기준으로 rpmbuild 생성
+TOPDIR="$(pwd)"
+RPMTOP="$TOPDIR/rpmbuild"
 SOURCES="$RPMTOP/SOURCES"
 SPECS="$RPMTOP/SPECS"
 
@@ -20,12 +22,17 @@ echo "==> RPMTOP  : $RPMTOP"
 echo
 
 # -----------------------------
-# 0. rpmbuild tree
+# 0. rpmbuild 초기화
 # -----------------------------
+if [ -d "$RPMTOP" ]; then
+    echo "==> Cleaning old rpmbuild directory"
+    rm -rf "$RPMTOP"
+fi
+
 mkdir -p "$RPMTOP"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 
 # -----------------------------
-# 1. clean
+# 1. clean workspace
 # -----------------------------
 echo "==> clean"
 make clean || true
@@ -45,6 +52,7 @@ echo "==> create source tarball"
 tar -cJf "$SOURCES/$NAME-$VERSION.tar.xz" \
   --exclude node_modules \
   --exclude dist \
+  --exclude rpmbuild \
   --transform "s,^,$NAME-$VERSION/," \
   .
 
@@ -65,7 +73,8 @@ sed "s/^Version:.*/Version:        $VERSION/" \
 # 6. rpmbuild
 # -----------------------------
 echo "==> rpmbuild"
-rpmbuild -ba "$SPECS/$SPEC_NAME"
+rpmbuild -ba "$SPECS/$SPEC_NAME" \
+    --define "_topdir $RPMTOP"
 
 echo
 echo "DONE"

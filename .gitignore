@@ -17,9 +17,9 @@
 /*.whl
 /bots
 /cockpit-*.tar.xz
-/cockpit-files.spec
 /dist/
 /node_modules/
+/rpmbuild/
 /metafile.json
 /package-lock.json
 /pkg/
@@ -32,7 +32,7 @@
 /packaging/debian/changelog
 /packaging/debian/copyright
 /po/*.pot
- /po/LINGUAS
+/po/LINGUAS
 /test/common/
 /test/images/
 /test/static-code

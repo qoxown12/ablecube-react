@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <!-- AppStream component ID (filename과 반드시 동일) -->
+  <id>io.ablecloud.ablestack</id>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+
+  <name>ABLESTACK Management</name>
+  <summary>Manage ABLESTACK products in Cockpit</summary>
+
+  <description>
+    <p>
+      Cockpit-based system management UI for ABLESTACK products.
+    </p>
+    <p>
+      Provides a wizard-based interface for installing, configuring,
+      and managing ABLESTACK components.
+    </p>
+  </description>
+
+  <!-- Cockpit 자체에 붙는 addon -->
+  <extends>org.cockpit_project.cockpit</extends>
+
+  <!-- Cockpit manifest.json의 name과 반드시 일치 -->
+  <launchable type="cockpit-manifest">ablestack</launchable>
+
+  <url type="homepage">https://github.com/qoxown12/ablecube-react</url>
+  <url type="bugtracker">https://github.com/qoxown12/ablecube-react/issues</url>
+
+  <update_contact>support@ablecloud.io</update_contact>
+
+  <developer id="io.ablecloud">
+    <name>ABLECLOUD</name>
+  </developer>
+</component>

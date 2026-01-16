@@ -1,133 +1,76 @@
-# Cockpit Files
+# ABLESTACK Cube
 
-This is the [Cockpit](https://cockpit-project.org/) user interface for managing
-files.
+Cube에 ABLESTACK 관리기능을 제공합니다.
 
 
 # Development dependencies
 
-On Debian/Ubuntu:
-
-    sudo apt install gettext nodejs npm make
-
 On Fedora:
 
-    sudo dnf install gettext nodejs npm make
+    sudo dnf -y install git gcc gcc-c++ make autoconf automake libtool intltool \
+        glib2-devel libxslt-devel libmount-devel pam-devel \
+        systemd-devel json-glib-devel gnutls-devel krb5-devel \
+        nodejs npm xmlto rpm-build
 
 
 # Getting and building the source
 
-These commands check out the source and build it into the `dist/` directory:
+이 명령어들은 소스 코드를 가져와(checkout) dist/ 디렉터리로 빌드하는 작업을 수행합니다.
 
 ```
-git clone https://github.com/cockpit-project/cockpit-files.git
-cd cockpit-files
+git clone https://github.com/qoxown12/ablecube-react.git
+cd ablecube-react
 make
 ```
 
 # Installing
-
-`make install` compiles and installs the package in `/usr/local/share/cockpit/`. The
-convenience targets `srpm` and `rpm` build the source and binary rpms,
-respectively. Both of these make use of the `dist` target, which is used
-to generate the distribution tarball. In `production` mode, source files are
-automatically minified and compressed. Set `NODE_ENV=production` if you want to
-duplicate this behavior.
-
-For development, you usually want to run your module straight out of the git
-tree. To do that, run `make devel-install`, which links your checkout to the
-location were cockpit-bridge looks for packages. If you prefer to do
-this manually:
+개발 시에는 일반적으로 git 트리에서 바로 모듈을 실행하고 싶을 때가 많습니다. 이를 위해서는 make devel-install을 실행하면, 체크아웃한 코드를 cockpit-bridge가 패키지를 찾는 위치에 심볼릭 링크로 연결합니다.
+수동으로 하고 싶다면:
 
 ```
 mkdir -p ~/.local/share/cockpit
-ln -s `pwd`/dist ~/.local/share/cockpit/cockpit-files
+ln -s `pwd`/dist ~/.local/share/cockpit/ablestack
 ```
 
-After changing the code and running `make` again, reload the Cockpit page in
-your browser.
+코드를 변경한 뒤 `make` 또는 `./build.js` 를 실행하고, 브라우저에서 Cockpit 페이지를 새로고침하세요.
 
-You can also use
-[watch mode](https://esbuild.github.io/api/#watch) to
-automatically update the bundle on every code change with
+watch mode를 사용하면 코드 변경 시마다 번들이 자동으로 다시 생성됩니다.
 
     npm run watch
 
-or
+로컬에 설치된 버전을 제거하려면 make devel-uninstall을 실행하거나 심볼릭 링크를 직접 제거하십시오.
 
-    make watch
-
-When developing against a virtual machine, watch mode can also automatically upload
-the code changes by setting the `RSYNC` environment variable to
-the remote hostname.
-
-    RSYNC=c make watch
-
-When developing against a remote host as a normal user, `RSYNC_DEVEL` can be
-set to upload code changes to `~/.local/share/cockpit/` instead of
-`/usr/local`.
-
-    RSYNC_DEVEL=example.com make watch
-
-To "uninstall" the locally installed version, run `make devel-uninstall`, or
-remove manually the symlink:
-
-    rm ~/.local/share/cockpit/cockpit-files
+    rm ~/.local/share/cockpit/ablestack
 
 # Running eslint
 
-Cockpit Files uses [ESLint](https://eslint.org/) to automatically check
-JavaScript code style in `.js` and `.jsx` files.
+Cockpit Files는 .js 및 .jsx 파일의 JavaScript 코드 스타일을 자동으로 검사하기 위해 ESLint를 사용합니다.
 
-eslint is executed as part of `test/static-code`, aka. `make codecheck`.
-
-For developer convenience, the ESLint can be started explicitly by:
+개발자 편의를 위해 ESLint를 다음 명령으로 직접 실행할 수도 있습니다:
 
     npm run eslint
 
-Violations of some rules can be fixed automatically by:
+일부 규칙 위반은 다음 명령을 통해 자동으로 수정할 수 있습니다:
 
     npm run eslint:fix
 
-Rules configuration can be found in the `.eslintrc.json` file.
+규칙 설정은 `.eslintrc.json` 파일에서 확인할 수 있습니다
 
 ## Running stylelint
 
-Cockpit uses [Stylelint](https://stylelint.io/) to automatically check CSS code
-style in `.css` and `scss` files.
+Cockpit은 .css 및 .scss 파일의 CSS 코드 스타일을 자동으로 검사하기 위해 Stylelint를 사용합니다.
 
-styleint is executed as part of `test/static-code`, aka. `make codecheck`.
-
-For developer convenience, the Stylelint can be started explicitly by:
+개발자 편의를 위해 Stylelint를 다음 명령으로 직접 실행할 수도 있습니다:
 
     npm run stylelint
 
-Violations of some rules can be fixed automatically by:
+일부 규칙 위반은 다음 명령을 통해 자동으로 수정할 수 있습니다:
 
     npm run stylelint:fix
 
-Rules configuration can be found in the `.stylelintrc.json` file.
+규칙 설정은 `.stylelintrc.json` 파일에서 확인할 수 있습니다
 
-# Running tests locally
+## rpm build
 
-Run `make check` to build an RPM, install it into a standard Cockpit test VM
-(centos-8-stream by default), and run the test/check-application integration test on
-it. This uses Cockpit's Chrome DevTools Protocol based browser tests, through a
-Python API abstraction. Note that this API is not guaranteed to be stable, so
-if you run into failures and don't want to adjust tests, consider checking out
-Cockpit's test/common from a tag instead of main (see the `test/common`
-target in `Makefile`).
-
-After the test VM is prepared, you can manually run the test without rebuilding
-the VM, possibly with extra options for tracing and halting on test failures
-(for interactive debugging):
-
-    TEST_OS=centos-9-stream test/check-application -tvs
-
-It is possible to setup the test environment without running the tests:
-
-    TEST_OS=centos-9-stream make prepare-check
-
-You can also run the test against a different Cockpit image, for example:
-
-    TEST_OS=fedora-rawhide make check
+RPM을 생성하려면 `sh rpm-builder.sh` 를 실행하세요.
+빌드가 완료되면 결과물은 ./rpmbuild/RPMS/noarch/ 경로에 생성됩니다.
