@@ -71,7 +71,7 @@
     @extend .ct-card;
 }
 
-.files-overview-header {
+.files-status-header {
     grid-column: header;
     gap: var(--pf-t--global--spacer--sm);
     display: flex;

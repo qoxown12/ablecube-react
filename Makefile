@@ -25,7 +25,6 @@ all: $(DIST_TEST)
 #
 COCKPIT_REPO_FILES = \
 	pkg/lib \
-	test/common \
 	tools/build-debian-copyright
 
 COCKPIT_REPO_URL = https://github.com/cockpit-project/cockpit.git

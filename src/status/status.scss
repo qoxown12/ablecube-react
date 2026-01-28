@@ -1,0 +1,96 @@
+/* PatternFly 기본 CSS를 가져옵니다 */
+@use "@patternfly/patternfly/patternfly.css";
+@use "@patternfly/patternfly/patternfly-addons.css";
+
+/* SYSTEM status HEADER */
+.ct-status-header {
+    flex-direction: row;
+  
+    &,
+    &-hostname {
+      flex-wrap: wrap;
+    }
+  
+    &-actions,
+    &-hostname {
+      box-sizing: border-box;
+      display: flex;
+    }
+  
+    &-hostname {
+      align-items: baseline;
+      flex: auto;
+  
+      > h1 {
+        font-size: var(--pf-t--global--font--size--2xl) !important;
+      }
+    }
+  
+    &-hostname > h1,
+    &-subheading {
+      padding-inline-end: 1rem;
+    }
+  
+    &-actions {
+      align-items: center;
+    }
+  
+    &-subheading {
+      font-size: var(--pf-t--global--font--size--md);
+    }
+  }
+
+/* PATTERNFLY GALLERY (카드 배치) */
+.ct-system-status {
+    width: 100%;
+  
+    /* Gallery 컬럼을 화면에 맞게 자동 확장 */
+    --pf-v6-l-gallery--GridTemplateColumns: repeat(2, minmax(0, 1fr));
+  }
+  
+/* CARD TITLE */
+.ct-system-status .pf-c-card__title {
+  font-size: var(--pf-global--FontSize--xl);
+  font-weight: var(--pf-global--FontWeight--bold);
+}
+
+/* HEALTH CARD ICON */
+.ct-system-status .pf-c-card__title svg {
+  margin-right: var(--pf-global--spacer--sm);
+  color: #3e8635;
+}
+
+/* PROGRESS 영역 */
+.ct-system-status .pf-c-progress {
+  margin-top: var(--pf-global--spacer--sm);
+
+  &__status {
+    display: flex;
+    align-items: center;
+    gap: var(--pf-global--spacer--xs);
+  }
+}
+
+/* 버튼 border 제거 */
+.ct-status-buttons .pf-c-button {
+    border: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+/* 버튼 hover/active 색상 유지 */
+.ct-status-buttons .pf-c-button:hover,
+.ct-status-buttons .pf-c-button:focus {
+    background-color: var(--pf-global--active-color--100);
+}
+
+.ct-status-header-hostname {
+  display: flex;
+  flex-direction: column;   // 무조건 줄바꿈
+}
+
+.ct-status-header-desc {
+  margin-top: 4px;
+  font-size: var(--pf-t--global--font--size--md);
+  color: var(--pf-t--global--text--color--subtle);
+}

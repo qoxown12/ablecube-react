@@ -2,16 +2,11 @@
 follow_imports = 'silent'  # https://github.com/python-lsp/pylsp-mypy/issues/81
 scripts_are_modules = true  # allow checking all scripts in one invocation
 explicit_package_bases = true
-mypy_path = 'test/common:bots'
-exclude = [
-    "bots"
-]
 strict = true
 warn_return_any = false # https://github.com/python/mypy/issues/17380
 
 [tool.pyright]
 strict = ["**"]
-extraPaths = ["test/common", "bots"]
 
 [tool.ruff]
 exclude = [

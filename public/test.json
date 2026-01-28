@@ -1,0 +1,8 @@
+{
+  "clusterStatus": "Ok",
+  "diskStatus": "전체 9개의 디스크 중 9개 작동 중",
+  "gatewayStatus": "RBD GW 3개 실행 중 / 3개 제공 중 (quorum : scvm1, scvm3, scvm2)",
+  "daemonStatus": "scvm1.xingxp (전체 2개 실행중)",
+  "storagePools": "6 pools",
+  "storageCapacity": "전체 7.6 TiB 중 233 GiB 사용 중 (사용률 2.90 %)"
+}

@@ -12,7 +12,6 @@ import { cockpitPoEsbuildPlugin } from './pkg/lib/cockpit-po-plugin.js';
 import { cockpitRsyncEsbuildPlugin } from './pkg/lib/cockpit-rsync-plugin.js';
 import { cleanPlugin } from './pkg/lib/esbuild-cleanup-plugin.js';
 import { cockpitCompressPlugin } from './pkg/lib/esbuild-compress-plugin.js';
-import { filetype_plugin } from './src/filetype-plugin.js';
 
 const useWasm = os.arch() !== 'x64';
 
@@ -122,8 +121,6 @@ const context = await esbuild.context({
                 });
             }
         },
-
-        filetype_plugin,
 
         sassPlugin({
             loadPaths: [...nodePaths, 'node_modules'],
