@@ -5,7 +5,6 @@ import {
   CardTitle,
   CardBody,
   CardFooter,
-  Label,
   Flex,
   FlexItem,
   DescriptionList,
@@ -17,79 +16,42 @@ import {
   DropdownItem,
   MenuToggle,
 } from "@patternfly/react-core";
-import {
-  NetworkIcon,
-  InfoCircleIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  ExclamationCircleIcon,
-  EllipsisVIcon,
-} from "@patternfly/react-icons";
+import { EllipsisVIcon, StorageDomainIcon } from "@patternfly/react-icons";
 
 import cockpit from "cockpit";
 import "./status-card.scss";
 
-const CLUSTER_STATUS_META = {
-  HEALTH_OK: {
-    label: "Health Ok",
-    color: "green",
-    icon: <CheckCircleIcon />,
-  },
-  HEALTH_WARN: {
-    label: "Health Warn",
-    color: "orange",
-    icon: <ExclamationTriangleIcon />,
-  },
-  HEALTH_ERR: {
-    label: "Health Error",
-    color: "red",
-    icon: <ExclamationCircleIcon />,
-  },
+const DEFAULT_DATA = {
+  mode: "다중 모드",
+  mountPath: "/mnt/glue-gfs",
+  footerMessage: "GFS 디스크가 생성되었습니다.",
+  footerColor: "#3e8635",
 };
 
-const FALLBACK_DATA = {
-  clusterStatus: "HEALTH_ERR",
-  nodeStatus: "N/A",
-  resourceStatus: "N/A",
-  executionNode: "N/A",
-};
-
-export default function CloudClusterStatus() {
+export default function GfsDiskStatus() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [isMaintenance, setIsMaintenance] = React.useState(false);
 
   const [data, setData] = React.useState({
-    clusterStatus: "",
-    nodeStatus: "",
-    resourceStatus: "",
-    executionNode: "",
+    mode: "",
+    mountPath: "",
+    footerMessage: "",
+    footerColor: "",
   });
 
   React.useEffect(() => {
     cockpit
-      .spawn(["python3", `/root/ablecube-react/python/read_test_json.py`])
+      .spawn(["python3", "/root/ablecube-react/python/read_test_json.py"])
       .then((stdout) => {
         const parsed = JSON.parse(stdout);
-        const data = parsed["cloud-cluster-status"];
-        setData(data);
+        const next = parsed["gfs-disk-status"] ?? {};
+        setData({ ...DEFAULT_DATA, ...next });
       })
       .catch((err) => {
         console.error("spawn error:", err);
-        setData(FALLBACK_DATA);
+        setData(DEFAULT_DATA);
       });
   }, []);
-
-  const statusMeta = (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
-    label: "상태 체크 중...",
-    color: "orange",
-    icon: <InfoCircleIcon />,
-  };
-
-  const isClusterError = data.clusterStatus === "HEALTH_ERR";
-  const footerMessage = isClusterError
-    ? "클라우드센터 클러스터가 구성되지 않았습니다."
-    : "클라우드센터 클러스터가 구성되었습니다.";
-  const footerColor = isClusterError ? "#c9190b" : "#3e8635";
 
   const onSelect = () => setIsOpen(false);
 
@@ -143,11 +105,11 @@ export default function CloudClusterStatus() {
           <FlexItem>
             <CardTitle>
               <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-                <NetworkIcon
+                <StorageDomainIcon
                   style={{ fontSize: "var(--pf-global--icon--FontSize--lg)" }}
                   aria-hidden="true"
                 />
-                <span>클라우드센터 클러스터 상태</span>
+                <span>GFS 디스크 상태</span>
               </Flex>
             </CardTitle>
           </FlexItem>
@@ -157,38 +119,21 @@ export default function CloudClusterStatus() {
       <CardBody>
         <DescriptionList isCompact className="ct-status-card__dl">
           <DescriptionListGroup>
-            <DescriptionListTerm>클러스터 상태</DescriptionListTerm>
+            <DescriptionListTerm>모드</DescriptionListTerm>
+            <DescriptionListDescription>{data.mode}</DescriptionListDescription>
+          </DescriptionListGroup>
+
+          <DescriptionListGroup>
+            <DescriptionListTerm>마운트 경로</DescriptionListTerm>
             <DescriptionListDescription>
-              <Label
-                className="ct-health-label"
-                color={statusMeta.color}
-                icon={statusMeta.icon}
-                variant="outline"
-              >
-                {statusMeta.label}
-              </Label>
+              <span className="ct-status-card__mount">{data.mountPath}</span>
             </DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>노드구성</DescriptionListTerm>
-            <DescriptionListDescription>{data.nodeStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>리소스 상태</DescriptionListTerm>
-            <DescriptionListDescription>{data.resourceStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>VM실행노드</DescriptionListTerm>
-            <DescriptionListDescription>{data.executionNode}</DescriptionListDescription>
           </DescriptionListGroup>
         </DescriptionList>
       </CardBody>
 
-      <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
-        {footerMessage}
+      <CardFooter className="ct-status-card__footer" style={{ color: data.footerColor }}>
+        {data.footerMessage}
       </CardFooter>
     </Card>
   );

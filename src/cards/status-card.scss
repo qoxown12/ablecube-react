@@ -1,0 +1,93 @@
+.ct-status-card {
+  width: 100%;
+  height: 100%;
+}
+
+.ct-status-card__header {
+  border-bottom: 1px solid #d2d2d2;
+  padding-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.ct-status-card__footer {
+  margin-top: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid #d2d2d2;
+}
+
+.ct-status-card__dl {
+  display: grid;
+  row-gap: 10px;
+
+  .pf-v6-c-description-list__group {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: -5px;
+    gap: 8px;
+  }
+
+  .pf-v6-c-description-list__term {
+    min-width: 140px;
+    margin-bottom: 0;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .pf-v6-c-description-list__description {
+    margin-bottom: 0;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .pf-v6-c-description-list__description
+  .pf-v6-c-description-list__text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+}
+
+.ct-status-card__detail {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ct-status-card__detail-text {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.ct-status-card__mount {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border: 1px solid #0066cc;
+  border-radius: 6px;
+  color: #004080;
+  background: #f5f9ff;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.pf-v5-u-align-self-flex-start {
+  align-self: flex-start !important;
+}
+
+@media (max-width: 768px) {
+  .ct-status-card__dl {
+    .pf-v6-c-description-list__group {
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .pf-v6-c-description-list__term {
+      min-width: unset;
+      white-space: normal;
+    }
+  }
+}

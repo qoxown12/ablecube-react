@@ -11,6 +11,8 @@ import StorageClusterStatus from "../cards/storage-cluster-status";
 import CloudClusterStatus from "../cards/cloud-cluster-status";
 import StorageVmStatus from "../cards/storage-vm-status";
 import CloudVmStatus from "../cards/cloud-vm-status";
+import GfsResourceStatus from "../cards/gfs-resource-status";
+import GfsDiskStatus from "../cards/gfs-disk-status";
 
 import "./status.scss";
 
@@ -35,7 +37,10 @@ export default function StatusPage() {
         variant={PageSectionVariants.default}
         className="ct-status-buttons"
       >
-        <Button variant={ButtonVariant.primary}>
+        <Button variant={ButtonVariant.secondary}>
+          클러스터 구성준비 구성
+        </Button>
+        <Button variant={ButtonVariant.secondary}>
           모니터링센터 대시보드 연결
         </Button>
         <Button variant={ButtonVariant.secondary}>
@@ -65,6 +70,14 @@ export default function StatusPage() {
         <Gallery hasGutter className="ct-system-status">
           <StorageVmStatus />
           <CloudVmStatus />
+        </Gallery>
+      </PageSection>
+
+      {/* 하단 카드 (SystemInfo, Configuration) */}
+      <PageSection isFilled>
+        <Gallery hasGutter className="ct-system-status">
+          <GfsResourceStatus />
+          <GfsDiskStatus />
         </Gallery>
       </PageSection>
     </>

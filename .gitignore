@@ -18,6 +18,7 @@
 /bots
 /cockpit-*.tar.xz
 /dist/
+/img/
 /node_modules/
 /rpmbuild/
 /metafile.json

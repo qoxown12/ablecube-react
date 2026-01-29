@@ -27,7 +27,7 @@ import {
 } from "@patternfly/react-icons";
 
 import cockpit from "cockpit";
-import "./storage-cluster-status.scss";
+import "./status-card.scss";
 
 const CLUSTER_STATUS_META = {
   HEALTH_OK: {
@@ -97,9 +97,9 @@ export default function StorageClusterStatus() {
   const onSelect = () => setIsOpen(false);
 
   return (
-    <Card className="ct-storage-cluster-status">
+    <Card className="ct-status-card">
       <CardHeader
-        className="ct-storage-cluster-status__header"
+        className="ct-status-card__header"
         actions={{
           actions: (
             <Dropdown
@@ -158,7 +158,7 @@ export default function StorageClusterStatus() {
       </CardHeader>
 
       <CardBody>
-        <DescriptionList isCompact className="ct-storage-cluster-status__dl">
+        <DescriptionList isCompact className="ct-status-card__dl">
           <DescriptionListGroup>
             <DescriptionListTerm>클러스터 상태</DescriptionListTerm>
             <DescriptionListDescription>
@@ -200,7 +200,7 @@ export default function StorageClusterStatus() {
         </DescriptionList>
       </CardBody>
 
-      <CardFooter className="ct-storage-cluster-status__footer" style={{ color: footerColor }}>
+      <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
         {footerMessage}
       </CardFooter>
     </Card>
