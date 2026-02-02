@@ -44,26 +44,9 @@
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  min-width: 0;
-  .pf-v6-c-wizard__outer-wrap,
-  .pf-v6-c-wizard__inner-wrap,
-  .pf-v6-c-wizard__main,
-  .pf-v6-c-wizard__main-body {
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    min-width: 0;
-  }
 
-  .pf-v6-c-wizard__inner-wrap {
-    align-items: stretch;
-  }
-
-  .pf-v6-c-wizard__main {
-    flex: 1 1 auto;
-  }
   .pf-v6-c-wizard__nav {
-    width: 220px;
+    min-width: 250px;
   }
 
   .pf-v6-c-wizard__nav-item {
@@ -81,7 +64,7 @@
   }
 
   .pf-v6-c-wizard__main-body {
-    padding: 24px 28px 32px;
+    padding: 24px 24px;
     max-width: 100%;
     box-sizing: border-box;
   }
@@ -165,7 +148,7 @@
 .ct-cluster-config-wizard__footer {
   display: flex;
   gap: 8px;
-  padding: 12px 24px 16px;
+  padding: 24px 24px;
   border-top: 1px solid #e0e0e0;
   background: #fff;
 }

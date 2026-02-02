@@ -238,7 +238,7 @@ export default function ClusterConfigPrepareWizardModal({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={handleClose}
+      // onClose={handleClose}
       variant="large"
       aria-label="클러스터 구성 준비 마법사"
       className="ct-cluster-config-wizard__modal"
