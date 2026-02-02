@@ -13,10 +13,13 @@ import StorageVmStatus from "../cards/storage-vm-status";
 import CloudVmStatus from "../cards/cloud-vm-status";
 import GfsResourceStatus from "../cards/gfs-resource-status";
 import GfsDiskStatus from "../cards/gfs-disk-status";
+import ClusterConfigPrepareWizardModal from "../wizard/cluster-config-prepare-wizard";
 
 import "./status.scss";
 
 export default function StatusPage() {
+  const [isClusterWizardOpen, setIsClusterWizardOpen] = React.useState(false);
+
   return (
     <>
       {/* 헤더 */}
@@ -37,8 +40,11 @@ export default function StatusPage() {
         variant={PageSectionVariants.default}
         className="ct-status-buttons"
       >
-        <Button variant={ButtonVariant.secondary}>
-          클러스터 구성준비 구성
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => setIsClusterWizardOpen(true)}
+        >
+          클러스터 구성 준비
         </Button>
         <Button variant={ButtonVariant.secondary}>
           모니터링센터 대시보드 연결
@@ -50,6 +56,11 @@ export default function StatusPage() {
           라이센스 관리
         </Button>
       </PageSection>
+
+      <ClusterConfigPrepareWizardModal
+        isOpen={isClusterWizardOpen}
+        onClose={() => setIsClusterWizardOpen(false)}
+      />
 
       {/* 상단 카드 (Health, Usage) */}
       <PageSection className="ct-status-cards-top">
