@@ -63,6 +63,14 @@
     border-radius: 50%;
   }
 
+  .pf-v6-c-wizard__nav-link.pf-m-current {
+    color: #1f70ff;
+  }
+
+  .pf-v6-c-wizard__nav-link.pf-m-current::before {
+    background: #4d7cff;
+  }
+
   .pf-v6-c-wizard__main-body {
     padding: 24px 24px;
     max-width: 100%;

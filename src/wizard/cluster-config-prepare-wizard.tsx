@@ -440,7 +440,7 @@ export default function ClusterConfigPrepareWizardModal({
                   id="current-hostname"
                   value={currentHostname}
                   onChange={(_event, value) => setCurrentHostname(value)}
-                  isReadOnly
+                  readOnly
                 />
               </FormGroup>
 
@@ -508,30 +508,6 @@ export default function ClusterConfigPrepareWizardModal({
               <FormGroup label="PCS 호스트 PN IP #3" isRequired fieldId="pcs-pn-3">
                 <TextInput id="pcs-pn-3" value={pcsPnIp3} onChange={(_event, value) => setPcsPnIp3(value)} />
               </FormGroup>
-
-              {hostsFileMode === "existing" ? (
-                <FormGroup label="클러스터 구성 파일" isRequired fieldId="hosts-file">
-                  <FileUpload
-                    id="hosts-file-upload"
-                    type="text"
-                    value=""
-                    filename={hostsFilename}
-                    filenamePlaceholder="선택된 파일 없음"
-                    onFileInputChange={(_, file) => setHostsFilename(file.name)}
-                  />
-                </FormGroup>
-              ) : (
-                <FormGroup label="클러스터 구성 파일" fieldId="hosts-file-text">
-                  <TextArea
-                    id="hosts-file-text"
-                    value={hostsFileText}
-                    onChange={(_event, value) => setHostsFileText(value)}
-                    resizeOrientation="vertical"
-                    rows={4}
-                    placeholder="예) 10.10.0.11 ablecube32-1"
-                  />
-                </FormGroup>
-              )}
             </Form>
           </div>
         </WizardStep>
