@@ -1,44 +1,4 @@
-.ct-cluster-config-wizard__modal {
-  --pf-v6-c-modal-box--MaxWidth: 1040px;
-  --pf-v6-c-modal-box--Width: min(96vw, 1040px);
-  width: min(96vw, 1040px);
-  max-width: min(96vw, 1040px);
-  box-sizing: border-box;
-}
-
-.ct-cluster-config-wizard__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  background: #1a1a1a;
-  color: #fff;
-  padding: 18px 24px;
-  border-radius: 18px 18px 0 0;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.ct-cluster-config-wizard__title {
-  color: #fff;
-}
-
-.ct-cluster-config-wizard__subtitle {
-  color: #fff;
-}
-
-.ct-cluster-config-wizard__subtitle p {
-  color: inherit;
-  color: #fff;
-}
-
-.ct-cluster-config-wizard__close {
-  border: 0;
-  background: transparent;
-  color: #fff;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-}
+@use "./wizard-common";
 
 .ct-cluster-config-wizard {
   width: 100%;
@@ -151,14 +111,6 @@
 
 .ct-cluster-config-wizard__section {
   margin-top: 16px;
-}
-
-.ct-cluster-config-wizard__footer {
-  display: flex;
-  gap: 8px;
-  padding: 24px 24px;
-  border-top: 1px solid #e0e0e0;
-  background: #fff;
 }
 
 .ct-cluster-config-wizard__stepper {

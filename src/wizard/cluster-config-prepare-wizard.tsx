@@ -208,7 +208,7 @@ export default function ClusterConfigPrepareWizardModal({
     const stepId = String(activeStep.id);
     const isFirst = stepId === "cluster-config-overview";
     const isReview = stepId === "cluster-config-review";
-    const isFinish = stepId === "cluster-config-finish";
+    const isFinish = stepId === "cluster-config-complete";
     return (
       <div className="ct-cluster-config-wizard__footer">
         {!isFinish && (
@@ -765,7 +765,7 @@ export default function ClusterConfigPrepareWizardModal({
           </div>
         </WizardStep>
 
-        <WizardStep name="완료" id="cluster-config-finish">
+        <WizardStep name="구성" id="cluster-config-finish">
           <div className="ct-cluster-config-wizard__content">
             <Content>
               <Content component="p">
@@ -786,6 +786,24 @@ export default function ClusterConfigPrepareWizardModal({
                 <span>시간서버 설정 생성 및 마무리</span>
               </div>
             </div>
+          </div>
+        </WizardStep>
+
+        <WizardStep name="완료" id="cluster-config-complete">
+          <div className="ct-cluster-config-wizard__content">
+            <Content>
+              <Content component="p">
+                ABLESTACK 클러스터 구성을 위한 모든 설정이 완료되었습니다.
+              </Content>
+              <Content component="p">
+                SSH Key 파일 및 호스트 프로파일을 다운로드 받아 스토리지센터 및 클라우드센터 가상머신 배포 시 사용하십시오.
+              </Content>
+              <Content component="ul">
+                <Content component="li">Private SSH Key 다운로드</Content>
+                <Content component="li">Public SSH Key 다운로드</Content>
+                <Content component="li">클러스터 구성 프로파일 다운로드</Content>
+              </Content>
+            </Content>
           </div>
         </WizardStep>
       </Wizard>

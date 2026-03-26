@@ -1,0 +1,77 @@
+.ct-cluster-config-wizard__modal,
+.ct-storage-vm-wizard__modal,
+.ct-cloud-vm-wizard__modal,
+.ct-monitoring-center-wizard__modal,
+.ct-gfs-storage-wizard__modal {
+  --pf-v6-c-modal-box--MaxWidth: 1040px;
+  --pf-v6-c-modal-box--Width: min(96vw, 1040px);
+  width: min(96vw, 1040px);
+  max-width: min(96vw, 1040px);
+  box-sizing: border-box;
+}
+
+.ct-cluster-config-wizard__header,
+.ct-storage-vm-wizard__header,
+.ct-cloud-vm-wizard__header,
+.ct-monitoring-center-wizard__header,
+.ct-gfs-storage-wizard__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  background: #1a1a1a;
+  color: #fff;
+  padding: 18px 24px;
+  border-radius: 18px 18px 0 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ct-cluster-config-wizard__title,
+.ct-storage-vm-wizard__title,
+.ct-cloud-vm-wizard__title,
+.ct-monitoring-center-wizard__title,
+.ct-gfs-storage-wizard__title {
+  color: #fff;
+}
+
+.ct-cluster-config-wizard__subtitle,
+.ct-storage-vm-wizard__subtitle,
+.ct-cloud-vm-wizard__subtitle,
+.ct-monitoring-center-wizard__subtitle,
+.ct-gfs-storage-wizard__subtitle {
+  color: #fff;
+}
+
+.ct-cluster-config-wizard__subtitle p,
+.ct-storage-vm-wizard__subtitle p,
+.ct-cloud-vm-wizard__subtitle p,
+.ct-monitoring-center-wizard__subtitle p,
+.ct-gfs-storage-wizard__subtitle p {
+  color: inherit;
+  color: #fff;
+}
+
+.ct-cluster-config-wizard__close,
+.ct-storage-vm-wizard__close,
+.ct-cloud-vm-wizard__close,
+.ct-monitoring-center-wizard__close,
+.ct-gfs-storage-wizard__close {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ct-cluster-config-wizard__footer,
+.ct-storage-vm-wizard__footer,
+.ct-cloud-vm-wizard__footer,
+.ct-monitoring-center-wizard__footer,
+.ct-gfs-storage-wizard__footer {
+  display: flex;
+  gap: 8px;
+  padding: 24px 24px;
+  border-top: 1px solid #e0e0e0;
+  background: #fff;
+}

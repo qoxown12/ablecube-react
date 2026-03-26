@@ -14,11 +14,19 @@ import CloudVmStatus from "../cards/cloud-vm-status";
 import GfsResourceStatus from "../cards/gfs-resource-status";
 import GfsDiskStatus from "../cards/gfs-disk-status";
 import ClusterConfigPrepareWizardModal from "../wizard/cluster-config-prepare-wizard";
+import StorageVmDeployWizardModal from "../wizard/storage-vm-deploy-wizard";
+import CloudVmDeployWizardModal from "../wizard/cloud-vm-deploy-wizard";
+import MonitoringCenterWizardModal from "../wizard/monitoring-center-wizard";
+import GfsStorageConfigureWizardModal from "../wizard/gfs-storage-configure-wizard";
 
 import "./status.scss";
 
 export default function StatusPage() {
   const [isClusterWizardOpen, setIsClusterWizardOpen] = React.useState(false);
+  const [isStorageVmWizardOpen, setIsStorageVmWizardOpen] = React.useState(false);
+  const [isCloudVmWizardOpen, setIsCloudVmWizardOpen] = React.useState(false);
+  const [isMonitoringWizardOpen, setIsMonitoringWizardOpen] = React.useState(false);
+  const [isGfsWizardOpen, setIsGfsWizardOpen] = React.useState(false);
 
   return (
     <>
@@ -46,6 +54,30 @@ export default function StatusPage() {
         >
           클러스터 구성 준비
         </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => setIsStorageVmWizardOpen(true)}
+        >
+          스토리지센터 가상머신 배포
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => setIsGfsWizardOpen(true)}
+        >
+          GFS 스토리지 구성
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => setIsCloudVmWizardOpen(true)}
+        >
+          클라우드센터 VM 배포
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => setIsMonitoringWizardOpen(true)}
+        >
+          모니터링센터 구성
+        </Button>
         <Button variant={ButtonVariant.secondary}>
           모니터링센터 대시보드 연결
         </Button>
@@ -60,6 +92,26 @@ export default function StatusPage() {
       <ClusterConfigPrepareWizardModal
         isOpen={isClusterWizardOpen}
         onClose={() => setIsClusterWizardOpen(false)}
+      />
+
+      <StorageVmDeployWizardModal
+        isOpen={isStorageVmWizardOpen}
+        onClose={() => setIsStorageVmWizardOpen(false)}
+      />
+
+      <CloudVmDeployWizardModal
+        isOpen={isCloudVmWizardOpen}
+        onClose={() => setIsCloudVmWizardOpen(false)}
+      />
+
+      <MonitoringCenterWizardModal
+        isOpen={isMonitoringWizardOpen}
+        onClose={() => setIsMonitoringWizardOpen(false)}
+      />
+
+      <GfsStorageConfigureWizardModal
+        isOpen={isGfsWizardOpen}
+        onClose={() => setIsGfsWizardOpen(false)}
       />
 
       {/* 상단 카드 (Health, Usage) */}
