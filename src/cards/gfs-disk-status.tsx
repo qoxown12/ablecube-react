@@ -24,10 +24,11 @@ import GfsDiskActionModal from "./gfs-disk-action-modal";
 import type { GfsDiskAction } from "./gfs-disk-action-modal";
 import GfsMountInfoModal from "./gfs-mount-info-modal";
 import type { GfsMountInfo } from "./gfs-mount-info-modal";
+import { StatusLoadingMessage } from "./status-loading";
+import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   fetchGfsDiskStatus,
   GFS_DISK_STATUS_FALLBACK,
-  type GfsDiskStatusData,
 } from "../services/api/gfs-disk-status";
 import "./status-card.scss";
 
@@ -37,29 +38,14 @@ export default function GfsDiskStatus() {
   const [clvmDiskAction, setClvmDiskAction] = React.useState<ClvmDiskAction | null>(null);
   const [selectedMountInfo, setSelectedMountInfo] = React.useState<GfsMountInfo | null>(null);
 
-  const [data, setData] = React.useState<GfsDiskStatusData>(GFS_DISK_STATUS_FALLBACK);
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    fetchGfsDiskStatus()
-      .then((nextData) => {
-        if (isMounted) {
-          setData(nextData);
-        }
-      })
-      .catch((err) => {
-        console.error("gfs disk status API error:", err);
-
-        if (isMounted) {
-          setData(GFS_DISK_STATUS_FALLBACK);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+  const handleStatusError = React.useCallback((error: unknown) => {
+    console.error("gfs disk status API error:", error);
   }, []);
+  const { data, isCollecting } = useStatusPolling({
+    fetcher: fetchGfsDiskStatus,
+    fallback: GFS_DISK_STATUS_FALLBACK,
+    onError: handleStatusError,
+  });
 
   const onSelect = () => setIsOpen(false);
 
@@ -210,8 +196,13 @@ export default function GfsDiskStatus() {
         </DescriptionList>
       </CardBody>
 
-      <CardFooter className="ct-status-card__footer" style={{ color: data.footerColor }}>
-        {data.footerMessage}
+      <CardFooter
+        className="ct-status-card__footer"
+        style={{ color: isCollecting ? "#f0ab00" : data.footerColor }}
+      >
+        {isCollecting ? (
+          <StatusLoadingMessage>GFS 디스크 상태 체크 중...</StatusLoadingMessage>
+        ) : data.footerMessage}
       </CardFooter>
 
       <GfsDiskActionModal

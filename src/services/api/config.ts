@@ -4,12 +4,16 @@ const CUBE_CONF_PATHS = [
   "/etc/ablestack/cube.conf",
   "/root/ablecube-react/cube.conf",
 ];
+const STATUS_CARD_REFRESH_INTERVAL_CONF_KEY = "DEFAULT_STATUS_CARD_REFRESH_INTERVAL_SECONDS";
+
+export const FALLBACK_STATUS_CARD_REFRESH_INTERVAL_SECONDS = 10;
 
 interface CubeApiConfig {
   baseUrl: string;
   token: string;
 }
 
+let cubeConfPromise: Promise<Record<string, string>> | null = null;
 let cubeApiConfigPromise: Promise<CubeApiConfig> | null = null;
 
 function stripQuotes(value: string): string {
@@ -67,10 +71,40 @@ async function readCubeConf(): Promise<string> {
   throw new Error(`cube.conf 파일을 읽을 수 없습니다. ${errors.join("; ")}`);
 }
 
+async function getCubeConf(): Promise<Record<string, string>> {
+  if (!cubeConfPromise) {
+    cubeConfPromise = readCubeConf().then(parseCubeConf);
+  }
+
+  return cubeConfPromise;
+}
+
+function parsePositiveIntervalSeconds(value: string | undefined): number {
+  if (!value) {
+    return FALLBACK_STATUS_CARD_REFRESH_INTERVAL_SECONDS;
+  }
+
+  const intervalSeconds = Number(value.replace(/_/g, ""));
+
+  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+    return FALLBACK_STATUS_CARD_REFRESH_INTERVAL_SECONDS;
+  }
+
+  return intervalSeconds;
+}
+
+export async function getStatusCardRefreshIntervalMs(): Promise<number> {
+  const config = await getCubeConf();
+  const intervalSeconds = parsePositiveIntervalSeconds(
+    config[STATUS_CARD_REFRESH_INTERVAL_CONF_KEY]
+  );
+
+  return Math.round(intervalSeconds * 1000);
+}
+
 export async function getCubeApiConfig(): Promise<CubeApiConfig> {
   if (!cubeApiConfigPromise) {
-    cubeApiConfigPromise = readCubeConf().then((content) => {
-      const config = parseCubeConf(content);
+    cubeApiConfigPromise = getCubeConf().then((config) => {
       const baseUrl = config.CUBE_API_BASE_URL;
       const token = config.CUBE_API_TOKEN;
 

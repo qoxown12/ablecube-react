@@ -28,11 +28,18 @@ import {
 
 import ClvmDiskActionModal from "./clvm-disk-action-modal";
 import type { ClvmDiskAction } from "./clvm-disk-action-modal";
+import {
+  STATUS_LOADING_LABEL,
+  STATUS_UNKNOWN_LABEL,
+  StatusLoadingIcon,
+  StatusLoadingMessage,
+} from "./status-loading";
 import WwnListModal from "./wwn-list-modal";
 import CheckedConfirmActionModal from "../components/common/CheckedConfirmActionModal";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
 import MaintenanceModeConfirmModal from "../components/common/MaintenanceModeConfirmModal";
 import type { MaintenanceModeAction } from "../components/common/MaintenanceModeConfirmModal";
+import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   fetchStorageClusterStatus,
   STORAGE_CLUSTER_STATUS_FALLBACK,
@@ -71,46 +78,42 @@ export default function StorageClusterStatus() {
   const [isAutoShutdownModalOpen, setIsAutoShutdownModalOpen] = React.useState(false);
   const [isRemoveCubeHostModalOpen, setIsRemoveCubeHostModalOpen] = React.useState(false);
 
-  const [data, setData] = React.useState<StorageClusterStatusData>(STORAGE_CLUSTER_STATUS_FALLBACK);
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    fetchStorageClusterStatus()
-      .then((nextData) => {
-        if (isMounted) {
-          setData(nextData);
-          setIsMaintenance(nextData.maintenanceStatus);
-        }
-      })
-      .catch((err) => {
-        console.error("storage cluster status API error:", err);
-
-        if (isMounted) {
-          setData(STORAGE_CLUSTER_STATUS_FALLBACK);
-          setIsMaintenance(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+  const handleStatusLoad = React.useCallback((nextData: StorageClusterStatusData) => {
+    setIsMaintenance(nextData.maintenanceStatus);
   }, []);
+  const handleStatusError = React.useCallback((error: unknown) => {
+    console.error("storage cluster status API error:", error);
+    setIsMaintenance(false);
+  }, []);
+  const { data, isCollecting } = useStatusPolling({
+    fetcher: fetchStorageClusterStatus,
+    fallback: STORAGE_CLUSTER_STATUS_FALLBACK,
+    onSuccess: handleStatusLoad,
+    onError: handleStatusError,
+  });
 
-  const statusMeta = (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
-    label: "상태 체크 중...",
-    color: "orange",
-    icon: <InfoCircleIcon />,
-  };
+  const statusMeta = isCollecting
+    ? {
+      label: STATUS_LOADING_LABEL,
+      color: "orange",
+      icon: <StatusLoadingIcon />,
+    }
+    : (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
+      label: STATUS_UNKNOWN_LABEL,
+      color: "orange",
+      icon: <InfoCircleIcon />,
+    };
 
   const isClusterError = data.clusterStatus === "HEALTH_ERR";
   const isClusterUnknown = data.clusterStatus === "N/A" || data.clusterStatus === "";
-  const footerMessage = isClusterUnknown
+  const footerMessage = isCollecting
+    ? "스토리지센터 클러스터 상태 체크 중..."
+    : isClusterUnknown
     ? "스토리지센터 클러스터 상태 정보를 확인할 수 없습니다."
     : isClusterError
       ? "스토리지센터 클러스터가 구성되지 않았습니다."
       : "스토리지센터 클러스터가 구성되었습니다.";
-  const footerColor = isClusterUnknown ? "#f0ab00" : isClusterError ? "#c9190b" : "#3e8635";
+  const footerColor = isCollecting ? "#f0ab00" : isClusterUnknown ? "#f0ab00" : isClusterError ? "#c9190b" : "#3e8635";
 
   const onSelect = () => setIsOpen(false);
 
@@ -391,7 +394,9 @@ export default function StorageClusterStatus() {
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
-        {footerMessage}
+        {isCollecting ? (
+          <StatusLoadingMessage>{footerMessage}</StatusLoadingMessage>
+        ) : footerMessage}
       </CardFooter>
 
       <MaintenanceModeConfirmModal

@@ -35,14 +35,14 @@ interface GfsResourceStatusResponse {
 }
 
 export const GFS_RESOURCE_STATUS_FALLBACK: GfsResourceStatusData = {
-  fenceDeviceStatus: "N/A",
+  fenceDeviceStatus: "HEALTH_ERR",
   fenceDeviceDetail: "N/A",
-  lockDeviceStatus: "N/A",
+  lockDeviceStatus: "HEALTH_ERR",
   lockDeviceDetails: ["N/A"],
-  gfsDeviceStatus: "N/A",
+  gfsDeviceStatus: "HEALTH_ERR",
   gfsDeviceDetails: ["N/A"],
-  footerMessage: "GFS 리소스 상태 정보를 확인할 수 없습니다.",
-  footerColor: "#f0ab00",
+  footerMessage: "GFS 리소스가 구성되지 않았습니다.",
+  footerColor: "#c9190b",
 };
 
 function isTrue(value: string | undefined): boolean {
@@ -67,7 +67,7 @@ function isResourceWarning(resource: GfsResourceItem): boolean {
 
 function resourceHealth(resources: GfsResourceItem[]): string {
   if (resources.length === 0) {
-    return "N/A";
+    return "HEALTH_ERR";
   }
 
   if (resources.some((resource) => isTrue(resource.failed) || isTrue(resource.blocked))) {
@@ -140,6 +140,7 @@ function mapGfsResourceStatus(
     resourceHealth(gfsResources),
   ];
   const isHealthy = hasHealthyStatus(statuses);
+  const isNotConfigured = fenceResources.length === 0 || lockingResources.length === 0;
 
   return {
     fenceDeviceStatus: statuses[0],
@@ -148,7 +149,9 @@ function mapGfsResourceStatus(
     lockDeviceDetails: groupedRoleSummaries(lockingResources),
     gfsDeviceStatus: statuses[2],
     gfsDeviceDetails: groupedRoleSummaries(gfsResources),
-    footerMessage: isHealthy
+    footerMessage: isNotConfigured
+      ? "GFS 리소스가 구성되지 않았습니다."
+      : isHealthy
       ? "GFS 리소스가 구성되었습니다."
       : hasErrorStatus(statuses)
         ? "GFS 리소스에 오류가 있습니다."
@@ -162,8 +165,8 @@ export async function fetchGfsResourceStatus(): Promise<GfsResourceStatusData> {
     "/api/v1/cube/gfs/resource/status"
   );
 
-  if (parsed.code !== 200 || !parsed.val) {
-    throw new Error(parsed.message ?? "Invalid GFS resource status response");
+  if (String(parsed.code) !== "200" || !parsed.val) {
+    return GFS_RESOURCE_STATUS_FALLBACK;
   }
 
   return mapGfsResourceStatus(parsed.val);

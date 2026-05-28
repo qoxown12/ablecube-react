@@ -26,12 +26,18 @@ import {
   EllipsisVIcon,
 } from "@patternfly/react-icons";
 
+import {
+  STATUS_LOADING_LABEL,
+  STATUS_UNKNOWN_LABEL,
+  StatusLoadingIcon,
+  StatusLoadingMessage,
+} from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
 import VmResourceUpdateModal from "../components/common/VmResourceUpdateModal";
+import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   fetchStorageVmStatus,
   STORAGE_VM_STATUS_FALLBACK,
-  type StorageVmStatusData,
 } from "../services/api/storage-vm-status";
 import "./status-card.scss";
 
@@ -83,44 +89,37 @@ export default function StorageVmStatus() {
   const [confirmAction, setConfirmAction] = React.useState<StorageVmAction | null>(null);
   const [isResourceUpdateModalOpen, setIsResourceUpdateModalOpen] = React.useState(false);
 
-  const [data, setData] = React.useState<StorageVmStatusData>(STORAGE_VM_STATUS_FALLBACK);
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    fetchStorageVmStatus()
-      .then((nextData) => {
-        if (isMounted) {
-          setData(nextData);
-        }
-      })
-      .catch((err) => {
-        console.error("storage vm status API error:", err);
-
-        if (isMounted) {
-          setData(STORAGE_VM_STATUS_FALLBACK);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+  const handleStatusError = React.useCallback((error: unknown) => {
+    console.error("storage vm status API error:", error);
   }, []);
+  const { data, isCollecting } = useStatusPolling({
+    fetcher: fetchStorageVmStatus,
+    fallback: STORAGE_VM_STATUS_FALLBACK,
+    onError: handleStatusError,
+  });
 
-  const statusMeta = (VM_STATUS_META as any)[data.vmStatus] ?? {
-    label: "상태 체크 중...",
-    color: "orange",
-    icon: <InfoCircleIcon />,
-  };
+  const statusMeta = isCollecting
+    ? {
+      label: STATUS_LOADING_LABEL,
+      color: "orange",
+      icon: <StatusLoadingIcon />,
+    }
+    : (VM_STATUS_META as any)[data.vmStatus] ?? {
+      label: STATUS_UNKNOWN_LABEL,
+      color: "orange",
+      icon: <InfoCircleIcon />,
+    };
 
   const isVmError = data.vmStatus === "HEALTH_ERR";
   const isVmUnknown = data.vmStatus === "N/A" || data.vmStatus === "";
-  const footerMessage = isVmUnknown
+  const footerMessage = isCollecting
+    ? "스토리지센터 가상머신 상태 체크 중..."
+    : isVmUnknown
     ? "스토리지센터 가상머신 상태 정보를 확인할 수 없습니다."
     : isVmError
       ? "스토리지센터 가상머신이 배포되지 않았습니다."
       : "스토리지센터 가상머신이 배포되었습니다.";
-  const footerColor = isVmUnknown ? "#f0ab00" : isVmError ? "#c9190b" : "#3e8635";
+  const footerColor = isCollecting ? "#f0ab00" : isVmUnknown ? "#f0ab00" : isVmError ? "#c9190b" : "#3e8635";
   const isVmRunning = data.vmStatus === "running";
   const isVmStopped = data.vmStatus === "shutOff";
   const currentConfirmAction = confirmAction ? STORAGE_VM_ACTIONS[confirmAction] : null;
@@ -289,7 +288,9 @@ export default function StorageVmStatus() {
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
-        {footerMessage}
+        {isCollecting ? (
+          <StatusLoadingMessage>{footerMessage}</StatusLoadingMessage>
+        ) : footerMessage}
       </CardFooter>
 
       {currentConfirmAction && (

@@ -22,17 +22,21 @@ import {
   InfoCircleIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  ExclamationCircleIcon,
   EllipsisVIcon,
 } from "@patternfly/react-icons";
 
+import {
+  STATUS_LOADING_LABEL,
+  StatusLoadingIcon,
+  StatusLoadingMessage,
+} from "./status-loading";
 import WwnListModal from "./wwn-list-modal";
 import CheckedConfirmActionModal from "../components/common/CheckedConfirmActionModal";
 import SelectActionModal from "../components/common/SelectActionModal";
+import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   fetchGfsResourceStatus,
   GFS_RESOURCE_STATUS_FALLBACK,
-  type GfsResourceStatusData,
 } from "../services/api/gfs-resource-status";
 import "./status-card.scss";
 
@@ -50,7 +54,7 @@ const STATUS_META = {
   HEALTH_ERR: {
     label: "Health Err",
     color: "red",
-    icon: <ExclamationCircleIcon />,
+    icon: <ExclamationTriangleIcon />,
   },
 };
 
@@ -61,29 +65,14 @@ export default function GfsResourceStatus() {
   const [isWwnListModalOpen, setIsWwnListModalOpen] = React.useState(false);
   const [isHostRemoveModalOpen, setIsHostRemoveModalOpen] = React.useState(false);
 
-  const [data, setData] = React.useState<GfsResourceStatusData>(GFS_RESOURCE_STATUS_FALLBACK);
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    fetchGfsResourceStatus()
-      .then((nextData) => {
-        if (isMounted) {
-          setData(nextData);
-        }
-      })
-      .catch((err) => {
-        console.error("gfs resource status API error:", err);
-
-        if (isMounted) {
-          setData(GFS_RESOURCE_STATUS_FALLBACK);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+  const handleStatusError = React.useCallback((error: unknown) => {
+    console.error("gfs resource status API error:", error);
   }, []);
+  const { data, isCollecting } = useStatusPolling({
+    fetcher: fetchGfsResourceStatus,
+    fallback: GFS_RESOURCE_STATUS_FALLBACK,
+    onError: handleStatusError,
+  });
 
   const onSelect = () => setIsOpen(false);
 
@@ -141,11 +130,17 @@ export default function GfsResourceStatus() {
 
   const renderStatusDetail = (statusKey: string, detail?: string, detailLines?: string[]) => {
     const status =
-      (STATUS_META as any)[statusKey] ?? {
-        label: "상태 체크 중...",
-        color: "orange",
-        icon: <InfoCircleIcon />,
-      };
+      isCollecting
+        ? {
+          label: STATUS_LOADING_LABEL,
+          color: "orange",
+          icon: <StatusLoadingIcon />,
+        }
+        : (STATUS_META as any)[statusKey] ?? {
+          label: statusKey || "N/A",
+          color: "orange",
+          icon: <InfoCircleIcon />,
+        };
 
     return (
       <Flex className="ct-status-card__detail" gap={{ default: "gapSm" }}>
@@ -249,8 +244,13 @@ export default function GfsResourceStatus() {
         </DescriptionList>
       </CardBody>
 
-      <CardFooter className="ct-status-card__footer" style={{ color: data.footerColor }}>
-        {data.footerMessage}
+      <CardFooter
+        className="ct-status-card__footer"
+        style={{ color: isCollecting ? "#f0ab00" : data.footerColor }}
+      >
+        {isCollecting ? (
+          <StatusLoadingMessage>GFS 리소스 상태 체크 중...</StatusLoadingMessage>
+        ) : data.footerMessage}
       </CardFooter>
 
       <CheckedConfirmActionModal

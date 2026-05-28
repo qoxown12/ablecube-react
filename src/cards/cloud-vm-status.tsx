@@ -26,14 +26,20 @@ import {
   EllipsisVIcon,
 } from "@patternfly/react-icons";
 
+import {
+  STATUS_LOADING_LABEL,
+  STATUS_UNKNOWN_LABEL,
+  StatusLoadingIcon,
+  StatusLoadingMessage,
+} from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
 import SelectActionModal from "../components/common/SelectActionModal";
 import TextInputConfirmModal from "../components/common/TextInputConfirmModal";
 import VmResourceUpdateModal from "../components/common/VmResourceUpdateModal";
+import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   CLOUD_VM_STATUS_FALLBACK,
   fetchCloudVmStatus,
-  type CloudVmStatusData,
 } from "../services/api/cloud-vm-status";
 import "./status-card.scss";
 
@@ -123,44 +129,37 @@ export default function CloudVmStatus() {
   const [isResourceUpdateModalOpen, setIsResourceUpdateModalOpen] = React.useState(false);
   const [isSecondarySizeModalOpen, setIsSecondarySizeModalOpen] = React.useState(false);
 
-  const [data, setData] = React.useState<CloudVmStatusData>(CLOUD_VM_STATUS_FALLBACK);
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    fetchCloudVmStatus()
-      .then((nextData) => {
-        if (isMounted) {
-          setData(nextData);
-        }
-      })
-      .catch((err) => {
-        console.error("cloud vm status API error:", err);
-
-        if (isMounted) {
-          setData(CLOUD_VM_STATUS_FALLBACK);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+  const handleStatusError = React.useCallback((error: unknown) => {
+    console.error("cloud vm status API error:", error);
   }, []);
+  const { data, isCollecting } = useStatusPolling({
+    fetcher: fetchCloudVmStatus,
+    fallback: CLOUD_VM_STATUS_FALLBACK,
+    onError: handleStatusError,
+  });
 
-  const statusMeta = (VM_STATUS_META as any)[data.vmStatus] ?? {
-    label: "상태 체크 중...",
-    color: "orange",
-    icon: <InfoCircleIcon />,
-  };
+  const statusMeta = isCollecting
+    ? {
+      label: STATUS_LOADING_LABEL,
+      color: "orange",
+      icon: <StatusLoadingIcon />,
+    }
+    : (VM_STATUS_META as any)[data.vmStatus] ?? {
+      label: STATUS_UNKNOWN_LABEL,
+      color: "orange",
+      icon: <InfoCircleIcon />,
+    };
 
   const isVmError = data.vmStatus === "HEALTH_ERR";
   const isVmUnknown = data.vmStatus === "N/A" || data.vmStatus === "";
-  const footerMessage = isVmUnknown
+  const footerMessage = isCollecting
+    ? "클라우드센터 가상머신 상태 체크 중..."
+    : isVmUnknown
     ? "클라우드센터 가상머신 상태 정보를 확인할 수 없습니다."
     : isVmError
       ? "클라우드센터 가상머신이 배포되지 않았습니다."
       : "클라우드센터 가상머신이 배포되었습니다.";
-  const footerColor = isVmUnknown ? "#f0ab00" : isVmError ? "#c9190b" : "#3e8635";
+  const footerColor = isCollecting ? "#f0ab00" : isVmUnknown ? "#f0ab00" : isVmError ? "#c9190b" : "#3e8635";
   const isVmRunning = data.vmStatus === "running";
   const currentConfirmAction = confirmAction ? CLOUD_VM_CONFIRM_ACTIONS[confirmAction] : null;
   const currentSelectAction = selectAction ? CLOUD_VM_SELECT_ACTIONS[selectAction] : null;
@@ -372,7 +371,9 @@ export default function CloudVmStatus() {
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
-        {footerMessage}
+        {isCollecting ? (
+          <StatusLoadingMessage>{footerMessage}</StatusLoadingMessage>
+        ) : footerMessage}
       </CardFooter>
 
       {currentConfirmAction && (

@@ -28,11 +28,17 @@ import {
 
 import CloudClusterMigrationModal from "./cloud-cluster-migration-modal";
 import SshPortChangeModal from "./ssh-port-change-modal";
+import {
+  STATUS_LOADING_LABEL,
+  STATUS_UNKNOWN_LABEL,
+  StatusLoadingIcon,
+  StatusLoadingMessage,
+} from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
+import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   CLOUD_CLUSTER_STATUS_FALLBACK,
   fetchCloudClusterStatus,
-  type CloudClusterStatusData,
 } from "../services/api/cloud-cluster-status";
 import "./status-card.scss";
 
@@ -119,44 +125,37 @@ export default function CloudClusterStatus() {
   const [isMigrationModalOpen, setIsMigrationModalOpen] = React.useState(false);
   const [isSshPortChangeModalOpen, setIsSshPortChangeModalOpen] = React.useState(false);
 
-  const [data, setData] = React.useState<CloudClusterStatusData>(CLOUD_CLUSTER_STATUS_FALLBACK);
-
-  React.useEffect(() => {
-    let isMounted = true;
-
-    fetchCloudClusterStatus()
-      .then((nextData) => {
-        if (isMounted) {
-          setData(nextData);
-        }
-      })
-      .catch((err) => {
-        console.error("cloud cluster status API error:", err);
-
-        if (isMounted) {
-          setData(CLOUD_CLUSTER_STATUS_FALLBACK);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
+  const handleStatusError = React.useCallback((error: unknown) => {
+    console.error("cloud cluster status API error:", error);
   }, []);
+  const { data, isCollecting } = useStatusPolling({
+    fetcher: fetchCloudClusterStatus,
+    fallback: CLOUD_CLUSTER_STATUS_FALLBACK,
+    onError: handleStatusError,
+  });
 
-  const statusMeta = (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
-    label: "상태 체크 중...",
-    color: "orange",
-    icon: <InfoCircleIcon />,
-  };
+  const statusMeta = isCollecting
+    ? {
+      label: STATUS_LOADING_LABEL,
+      color: "orange",
+      icon: <StatusLoadingIcon />,
+    }
+    : (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
+      label: STATUS_UNKNOWN_LABEL,
+      color: "orange",
+      icon: <InfoCircleIcon />,
+    };
 
   const isClusterError = data.clusterStatus === "HEALTH_ERR";
   const isClusterUnknown = data.clusterStatus === "N/A" || data.clusterStatus === "";
-  const footerMessage = isClusterUnknown
+  const footerMessage = isCollecting
+    ? "클라우드센터 클러스터 상태 체크 중..."
+    : isClusterUnknown
     ? "클라우드센터 클러스터 상태 정보를 확인할 수 없습니다."
     : isClusterError
       ? "클라우드센터 클러스터가 구성되지 않았습니다."
       : "클라우드센터 클러스터가 구성되었습니다.";
-  const footerColor = isClusterUnknown ? "#f0ab00" : isClusterError ? "#c9190b" : "#3e8635";
+  const footerColor = isCollecting ? "#f0ab00" : isClusterUnknown ? "#f0ab00" : isClusterError ? "#c9190b" : "#3e8635";
   const isClusterReady = data.clusterStatus === "HEALTH_OK";
   const isCloudVmRunning = data.resourceStatus === "실행중";
   const migrationNodes = parseMigrationNodes(data.nodeStatus, data.executionNode);
@@ -352,7 +351,9 @@ export default function CloudClusterStatus() {
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
-        {footerMessage}
+        {isCollecting ? (
+          <StatusLoadingMessage>{footerMessage}</StatusLoadingMessage>
+        ) : footerMessage}
       </CardFooter>
 
       {currentConfirmAction && (

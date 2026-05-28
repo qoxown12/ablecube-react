@@ -15,6 +15,28 @@
   border-top: 1px solid #d2d2d2;
 }
 
+.ct-status-card__loading-message {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pf-v6-c-spinner.ct-status-card__loading-spinner {
+  --pf-v6-c-spinner--diameter: 0.875em;
+  --pf-v6-c-spinner--Color: currentcolor;
+
+  flex: 0 0 auto;
+  display: block;
+  width: var(--pf-v6-c-spinner--diameter);
+  height: var(--pf-v6-c-spinner--diameter);
+}
+
+.ct-health-label .pf-v6-c-label__icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
 .ct-status-card__dl {
   display: grid;
   row-gap: 10px;
