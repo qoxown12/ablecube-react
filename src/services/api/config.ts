@@ -5,6 +5,7 @@ const CUBE_CONF_PATHS = [
   "/root/ablecube-react/cube.conf",
 ];
 const STATUS_CARD_REFRESH_INTERVAL_CONF_KEY = "DEFAULT_STATUS_CARD_REFRESH_INTERVAL_SECONDS";
+const AUTH_TOKEN_HELPER = "/usr/bin/ablestack-auth-token";
 
 export const FALLBACK_STATUS_CARD_REFRESH_INTERVAL_SECONDS = 10;
 
@@ -49,6 +50,54 @@ function parseCubeConf(content: string): Record<string, string> {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
+}
+
+function normalizeAuthorizationToken(value: string): string {
+  const trimmed = value.trim();
+
+  if (trimmed.toLowerCase().startsWith("bearer ")) {
+    return trimmed.slice("bearer ".length).trim();
+  }
+
+  return trimmed;
+}
+
+function parseAuthTokenHelperOutput(stdout: string): string {
+  const trimmed = stdout.trim();
+
+  if (!trimmed) {
+    throw new Error("ablestack-auth-token 실행 결과가 비어 있습니다.");
+  }
+
+  if (trimmed.startsWith("{")) {
+    const parsed = JSON.parse(trimmed) as {
+      authorization?: unknown;
+      access_token?: unknown;
+    };
+
+    if (typeof parsed.authorization === "string" && parsed.authorization.trim()) {
+      return normalizeAuthorizationToken(parsed.authorization);
+    }
+
+    if (typeof parsed.access_token === "string" && parsed.access_token.trim()) {
+      return parsed.access_token.trim();
+    }
+
+    throw new Error("ablestack-auth-token 응답에 authorization 또는 access_token 값이 없습니다.");
+  }
+
+  return normalizeAuthorizationToken(trimmed);
+}
+
+async function issueCubeApiToken(): Promise<string> {
+  try {
+    const stdout = await cockpit.spawn([AUTH_TOKEN_HELPER, "--plain"], { superuser: "try" });
+    return parseAuthTokenHelperOutput(stdout);
+  } catch (error) {
+    throw new Error(
+      `cube.conf에 CUBE_API_TOKEN 값이 없고 ${AUTH_TOKEN_HELPER} 실행도 실패했습니다. ${String(error)}`
+    );
+  }
 }
 
 async function readCubeConf(): Promise<string> {
@@ -104,12 +153,14 @@ export async function getStatusCardRefreshIntervalMs(): Promise<number> {
 
 export async function getCubeApiConfig(): Promise<CubeApiConfig> {
   if (!cubeApiConfigPromise) {
-    cubeApiConfigPromise = getCubeConf().then((config) => {
+    cubeApiConfigPromise = getCubeConf().then(async (config) => {
       const baseUrl = config.CUBE_API_BASE_URL;
-      const token = config.CUBE_API_TOKEN;
+      const token = config.CUBE_API_TOKEN
+        ? normalizeAuthorizationToken(config.CUBE_API_TOKEN)
+        : await issueCubeApiToken();
 
-      if (!baseUrl || !token) {
-        throw new Error("cube.conf에 CUBE_API_BASE_URL 또는 CUBE_API_TOKEN 값이 없습니다.");
+      if (!baseUrl) {
+        throw new Error("cube.conf에 CUBE_API_BASE_URL 값이 없습니다.");
       }
 
       return {

@@ -13,6 +13,8 @@ import StorageVmStatus from "../cards/storage-vm-status";
 import CloudVmStatus from "../cards/cloud-vm-status";
 import GfsResourceStatus from "../cards/gfs-resource-status";
 import GfsDiskStatus from "../cards/gfs-disk-status";
+import GfsIntegrationStatus from "../cards/gfs-integration-status";
+import LocalDiskStatus from "../cards/local-disk-status";
 import ClusterConfigPrepareWizardModal from "../wizard/cluster-config-prepare-wizard";
 import StorageVmDeployWizardModal from "../wizard/storage-vm-deploy-wizard";
 import CloudVmDeployWizardModal from "../wizard/cloud-vm-deploy-wizard";
@@ -161,6 +163,14 @@ export default function StatusPage() {
         <Gallery hasGutter className="ct-system-status">
           <GfsResourceStatus />
           <GfsDiskStatus />
+        </Gallery>
+      </PageSection>
+
+      {/* 하단 카드 (GFS Integration, Local Disk) */}
+      <PageSection isFilled>
+        <Gallery hasGutter className="ct-system-status">
+          <GfsIntegrationStatus />
+          <LocalDiskStatus />
         </Gallery>
       </PageSection>
     </>

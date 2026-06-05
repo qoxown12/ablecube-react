@@ -121,6 +121,14 @@ API 소스 기준 저장소:
 - API 소스가 오래되었을 가능성이 있거나 실제 최신 endpoint 확인이 필요하면 `/root/ablestack-API`에서 `git pull`로 최신화한 뒤 확인한다.
 - `ablecube-react` 안에 API 저장소를 복사하거나 vendoring하지 않는다.
 
+API 분석 및 UI 반영 기준:
+
+- 작업 중 "api"라고 표현하면 `/root/ablestack-API`의 백엔드 소스를 기준으로 해석한다.
+- 기능 구현 전에 사용할 endpoint, HTTP method, request body/query, response schema, 성공/실패 판정 조건, 에러 메시지 필드를 먼저 분석한다.
+- 분석 결과는 "어떤 API를 호출하면 어떤 결과 값이 반환되는지"와 "그 값을 `ablecube-react` 화면 state/props/service 타입에 어떻게 매핑할지"까지 함께 정리한다.
+- React 화면은 분석된 API를 `src/services/api/*` 함수로 감싸서 호출하고, 컴포넌트는 service 함수와 typed result만 사용한다.
+- 최종 목표는 분석에 그치지 않고 `ablecube-react` 화면에서 실제 API 연동 기능이 동작하도록 구현하는 것이다.
+
 ## 목표 구조
 
 `ablecube-react/src`는 아래 방향으로 정리한다.
@@ -182,6 +190,9 @@ src/
   - 상태 카드 재수집 주기는 `cube.conf`의 `DEFAULT_STATUS_CARD_REFRESH_INTERVAL_SECONDS` 값으로 변경할 수 있으며, 값 단위는 초이다.
   - 상태 카드 재수집 중에는 기존 상세 값을 유지하되, 상태 라벨/푸터는 로딩 아이콘과 `상태 체크 중...` 문구를 표시하고 응답 후 실제 상태로 되돌린다.
   - 앞으로 추가되는 상태 카드는 별도 `setInterval`/`useEffect`를 직접 만들지 않고 공통 폴링 훅에 `fetcher`, `fallback`, 필요 시 성공/오류 콜백만 전달한다.
+  - `GFS 통합 상태` 카드는 `/api/v1/cube/gfs/resource/status`와 `/api/v1/cube/gfs/disk/status` 결과를 합쳐 펜스/잠금/마운트 상태를 표시한다.
+  - `로컬 디스크 상태` 카드는 `POST /api/v1/cube/local/manage`에 `{ "action": "local-disk-status" }`를 보내고, `status`, `mount_path`, `pv`, `vg`, `size`를 카드 필드로 매핑한다.
+  - GFS 통합/로컬 디스크 카드의 드롭다운 액션은 구버전 메뉴 기준으로 버튼과 확인 모달을 우선 배치하고, 실행 함수는 후속 API 액션 분석 후 `services/api`에 연결한다.
   - 공통 카드 프레임 컴포넌트 도입
   - 동일 상태/에러/빈값 표시 로직 통일
 
