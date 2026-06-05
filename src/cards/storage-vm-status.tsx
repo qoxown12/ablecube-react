@@ -32,12 +32,16 @@ import {
   StatusLoadingIcon,
   StatusLoadingMessage,
 } from "./status-loading";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
 import VmResourceUpdateModal from "../components/common/VmResourceUpdateModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
   fetchStorageVmStatus,
+  startStorageVm,
   STORAGE_VM_STATUS_FALLBACK,
+  stopStorageVm,
 } from "../services/api/storage-vm-status";
 import "./status-card.scss";
 
@@ -60,6 +64,7 @@ const VM_STATUS_META = {
 };
 
 type StorageVmAction = "start" | "stop" | "delete" | "connect";
+type StorageVmLifecycleAction = Extract<StorageVmAction, "start" | "stop">;
 
 const STORAGE_VM_ACTIONS: Record<StorageVmAction, { title: string; message: string; confirmLabel?: string }> = {
   start: {
@@ -84,10 +89,39 @@ const STORAGE_VM_ACTIONS: Record<StorageVmAction, { title: string; message: stri
   },
 };
 
+const STORAGE_VM_LIFECYCLE_MESSAGES: Record<
+StorageVmLifecycleAction,
+{ running: string; success: string; error: string }
+> = {
+  start: {
+    running: "스토리지센터 가상머신 시작을 진행중입니다.",
+    success: "스토리지센터 가상머신 시작이 완료되었습니다.",
+    error: "스토리지센터 가상머신 시작 요청에 실패했습니다.",
+  },
+  stop: {
+    running: "스토리지센터 가상머신 정지를 진행중입니다.",
+    success: "스토리지센터 가상머신 정지가 완료되었습니다.",
+    error: "스토리지센터 가상머신 정지 요청에 실패했습니다.",
+  },
+};
+
+function isStorageVmLifecycleAction(action: StorageVmAction): action is StorageVmLifecycleAction {
+  return action === "start" || action === "stop";
+}
+
 export default function StorageVmStatus() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [confirmAction, setConfirmAction] = React.useState<StorageVmAction | null>(null);
   const [isResourceUpdateModalOpen, setIsResourceUpdateModalOpen] = React.useState(false);
+  const [actionProgress, setActionProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    message: "",
+  });
 
   const handleStatusError = React.useCallback((error: unknown) => {
     console.error("storage vm status API error:", error);
@@ -135,11 +169,52 @@ export default function StorageVmStatus() {
     setConfirmAction(null);
   };
 
-  const confirmStorageVmAction = () => {
+  const confirmStorageVmAction = async () => {
     if (!confirmAction) return;
-    // TODO: 백엔드 API 전환 후 storage-vm-status-update.py start/stop/delete 또는 create_address.py 호출로 연결합니다.
-    console.log("storage vm action", confirmAction);
+
+    if (!isStorageVmLifecycleAction(confirmAction)) {
+      // TODO: 백엔드 API 전환 후 delete 또는 create_address.py 호출로 연결합니다.
+      console.log("storage vm action", confirmAction);
+      setConfirmAction(null);
+      return;
+    }
+
+    const action = confirmAction;
+    const messages = STORAGE_VM_LIFECYCLE_MESSAGES[action];
+
     setConfirmAction(null);
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      message: messages.running,
+    });
+
+    try {
+      if (action === "start") {
+        await startStorageVm();
+      } else {
+        await stopStorageVm();
+      }
+
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        message: messages.success,
+      });
+    } catch (error) {
+      console.error(`storage vm ${action} API error:`, error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        message: error instanceof Error
+          ? error.message
+          : messages.error,
+      });
+    }
+  };
+
+  const closeActionProgressModal = () => {
+    setActionProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const openResourceUpdateModal = () => {
@@ -193,13 +268,13 @@ export default function StorageVmStatus() {
                   스토리지센터VM 정지
                 </DropdownItem>
                 <DropdownItem
-                  isDisabled={isVmRunning}
+                  isDisabled={!isVmStopped}
                   onClick={() => openConfirmActionModal("delete")}
                 >
                   스토리지센터VM 삭제
                 </DropdownItem>
                 <DropdownItem
-                  isDisabled={isVmRunning}
+                  isDisabled={!isVmStopped}
                   onClick={openResourceUpdateModal}
                 >
                   스토리지센터VM 자원변경
@@ -303,6 +378,14 @@ export default function StorageVmStatus() {
           onConfirm={confirmStorageVmAction}
         />
       )}
+
+      <ActionProgressModal
+        isOpen={actionProgress.isOpen}
+        title="스토리지 센터 가상머신 상태 변경"
+        phase={actionProgress.phase}
+        message={actionProgress.message}
+        onClose={closeActionProgressModal}
+      />
 
       <VmResourceUpdateModal
         isOpen={isResourceUpdateModalOpen}

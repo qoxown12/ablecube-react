@@ -22,6 +22,18 @@ interface ScvmStatusResponse {
   message?: string;
 }
 
+interface ScvmActionResponse {
+  code?: number | string;
+  val?: unknown;
+  retname?: string;
+  message?: string;
+  target?: string;
+  action?: string;
+  error?: string;
+}
+
+type ScvmLifecycleAction = "start" | "stop";
+
 interface CidrAddress {
   ip: string | null;
   prefix: string | null;
@@ -137,6 +149,22 @@ function prefixValue(label: string, value: string | null): string {
   return value ? `${label} : ${value}` : "N/A";
 }
 
+function getScvmActionError(response: ScvmActionResponse): string {
+  if (typeof response.error === "string" && response.error.trim()) {
+    return response.error;
+  }
+
+  if (typeof response.message === "string" && response.message.trim()) {
+    return response.message;
+  }
+
+  if (typeof response.val === "string" && response.val.trim()) {
+    return response.val;
+  }
+
+  return "스토리지센터 가상머신 상태 변경 요청에 실패했습니다.";
+}
+
 function mapScvmStatus(data: Record<string, unknown>): StorageVmStatusData {
   const manageNicAddress = parseCidrAddress(readString(data, "manageNicIp"));
 
@@ -174,4 +202,36 @@ export async function fetchStorageVmStatus(): Promise<StorageVmStatusData> {
   }
 
   return mapScvmStatus(parsed.data);
+}
+
+async function updateStorageVmLifecycle(
+  action: ScvmLifecycleAction
+): Promise<ScvmActionResponse> {
+  const parsed = await requestCubeApi<ScvmActionResponse>(
+    "/api/v1/cube/scvm/lifecycle",
+    {
+      method: "POST",
+      body: {
+        action,
+      },
+    }
+  );
+
+  if (parsed.code !== undefined && String(parsed.code) !== "200") {
+    throw new Error(getScvmActionError(parsed));
+  }
+
+  if (parsed.val === false) {
+    throw new Error(getScvmActionError(parsed));
+  }
+
+  return parsed;
+}
+
+export async function startStorageVm(): Promise<ScvmActionResponse> {
+  return updateStorageVmLifecycle("start");
+}
+
+export async function stopStorageVm(): Promise<ScvmActionResponse> {
+  return updateStorageVmLifecycle("stop");
 }
