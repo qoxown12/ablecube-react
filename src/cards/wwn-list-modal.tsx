@@ -21,6 +21,19 @@ interface WwnListModalProps {
 type WwnListLoadStatus = "idle" | "loading" | "success" | "error";
 
 function renderWwnValues(item: HbaWwnInfo) {
+  if (item.error) {
+    return (
+      <>
+        {item.wwn.map((value) => (
+          <div className="ct-wwn-list-modal__wwn" key={value}>
+            {value}
+          </div>
+        ))}
+        <span className="ct-wwn-list-modal__error">{item.error}</span>
+      </>
+    );
+  }
+
   if (item.wwn.length === 0) {
     return <span className="ct-wwn-list-modal__empty">없음</span>;
   }

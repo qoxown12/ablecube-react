@@ -20,10 +20,24 @@ import StorageVmDeployWizardModal from "../wizard/storage-vm-deploy-wizard";
 import CloudVmDeployWizardModal from "../wizard/cloud-vm-deploy-wizard";
 import MonitoringCenterWizardModal from "../wizard/monitoring-center-wizard";
 import GfsStorageConfigureWizardModal from "../wizard/gfs-storage-configure-wizard";
+import LocalStorageConfigureWizardModal from "../wizard/local-storage-configure-wizard";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
+import {
+  fetchCloudCenterUrl,
+  fetchMonitoringCenterUrl,
+  fetchStorageCenterUrl,
+} from "../services/api/url";
 import ConfigFileDownloadModal from "./config-file-download-modal";
 import LicenseManagementModal from "./license-management-modal";
+import RibbonActionNoticeModal from "./ribbon-action-notice-modal";
 
 import "./status.scss";
+
+interface RibbonNotice {
+  title: string;
+  message: string;
+}
 
 export default function StatusPage() {
   const [isClusterWizardOpen, setIsClusterWizardOpen] = React.useState(false);
@@ -31,8 +45,73 @@ export default function StatusPage() {
   const [isCloudVmWizardOpen, setIsCloudVmWizardOpen] = React.useState(false);
   const [isMonitoringWizardOpen, setIsMonitoringWizardOpen] = React.useState(false);
   const [isGfsWizardOpen, setIsGfsWizardOpen] = React.useState(false);
+  const [isLocalStorageWizardOpen, setIsLocalStorageWizardOpen] = React.useState(false);
   const [isConfigFileDownloadOpen, setIsConfigFileDownloadOpen] = React.useState(false);
   const [isLicenseManagementOpen, setIsLicenseManagementOpen] = React.useState(false);
+  const [ribbonNotice, setRibbonNotice] = React.useState<RibbonNotice | null>(null);
+  const [linkProgress, setLinkProgress] = React.useState<{
+    isOpen: boolean;
+    title: string;
+    phase: ActionProgressPhase;
+    message: string;
+  }>({
+    isOpen: false,
+    title: "",
+    phase: "running",
+    message: "",
+  });
+
+  const closeRibbonNotice = () => {
+    setRibbonNotice(null);
+  };
+
+  const showPendingAction = (title: string) => {
+    setRibbonNotice({
+      title,
+      message: `${title} 화면은 구버전 ABLESTACK UI에서 확인된 항목이며 React 화면 이관 대기 중입니다.`,
+    });
+  };
+
+  const openCenterUrl = async (
+    title: string,
+    fetcher: () => Promise<string>
+  ) => {
+    const targetWindow = window.open("about:blank", "_blank");
+
+    if (!targetWindow) {
+      setLinkProgress({
+        isOpen: true,
+        title,
+        phase: "error",
+        message: "브라우저 팝업 차단을 해제한 후 다시 시도해주세요.",
+      });
+      return;
+    }
+
+    try {
+      targetWindow.document.title = title;
+      targetWindow.document.body.textContent = "연결 주소를 확인하는 중입니다.";
+
+      const url = await fetcher();
+
+      targetWindow.opener = null;
+      targetWindow.location.href = url;
+    } catch (error) {
+      targetWindow.close();
+      setLinkProgress({
+        isOpen: true,
+        title,
+        phase: "error",
+        message: error instanceof Error
+          ? error.message
+          : `${title} 주소 조회에 실패했습니다.`,
+      });
+    }
+  };
+
+  const closeLinkProgress = () => {
+    setLinkProgress((prev) => ({ ...prev, isOpen: false }));
+  };
 
   return (
     <>
@@ -68,15 +147,39 @@ export default function StatusPage() {
         </Button>
         <Button
           variant={ButtonVariant.secondary}
+          onClick={() => setIsCloudVmWizardOpen(true)}
+        >
+          클라우드센터 VM 배포
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => openCenterUrl("스토리지센터 대시보드 연결", fetchStorageCenterUrl)}
+        >
+          스토리지센터 대시보드 연결
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
           onClick={() => setIsGfsWizardOpen(true)}
         >
           GFS 스토리지 구성
         </Button>
         <Button
           variant={ButtonVariant.secondary}
-          onClick={() => setIsCloudVmWizardOpen(true)}
+          onClick={() => showPendingAction("HCI 공유 파일 구성")}
         >
-          클라우드센터 VM 배포
+          HCI 공유 파일 구성
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => setIsLocalStorageWizardOpen(true)}
+        >
+          로컬 스토리지 구성
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => openCenterUrl("클라우드센터 연결", fetchCloudCenterUrl)}
+        >
+          클라우드센터 연결
         </Button>
         <Button
           variant={ButtonVariant.secondary}
@@ -84,7 +187,10 @@ export default function StatusPage() {
         >
           모니터링센터 구성
         </Button>
-        <Button variant={ButtonVariant.secondary}>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => openCenterUrl("모니터링센터 대시보드 연결", fetchMonitoringCenterUrl)}
+        >
           모니터링센터 대시보드 연결
         </Button>
         <Button
@@ -98,6 +204,15 @@ export default function StatusPage() {
           onClick={() => setIsLicenseManagementOpen(true)}
         >
           라이센스 관리
+        </Button>
+        <Button
+          variant={ButtonVariant.secondary}
+          onClick={() => showPendingAction("보안 업데이트")}
+        >
+          보안 업데이트
+        </Button>
+        <Button variant={ButtonVariant.secondary} isDisabled>
+          ABLESTACK Version 업데이트
         </Button>
       </PageSection>
 
@@ -126,6 +241,11 @@ export default function StatusPage() {
         onClose={() => setIsGfsWizardOpen(false)}
       />
 
+      <LocalStorageConfigureWizardModal
+        isOpen={isLocalStorageWizardOpen}
+        onClose={() => setIsLocalStorageWizardOpen(false)}
+      />
+
       <ConfigFileDownloadModal
         isOpen={isConfigFileDownloadOpen}
         onClose={() => setIsConfigFileDownloadOpen(false)}
@@ -134,6 +254,21 @@ export default function StatusPage() {
       <LicenseManagementModal
         isOpen={isLicenseManagementOpen}
         onClose={() => setIsLicenseManagementOpen(false)}
+      />
+
+      <RibbonActionNoticeModal
+        isOpen={Boolean(ribbonNotice)}
+        title={ribbonNotice?.title ?? ""}
+        message={ribbonNotice?.message ?? ""}
+        onClose={closeRibbonNotice}
+      />
+
+      <ActionProgressModal
+        isOpen={linkProgress.isOpen}
+        title={linkProgress.title}
+        phase={linkProgress.phase}
+        message={linkProgress.message}
+        onClose={closeLinkProgress}
       />
 
       {/* 상단 카드 (Health, Usage) */}

@@ -9,21 +9,26 @@ import {
   ModalHeader,
   Spinner,
 } from "@patternfly/react-core";
-import cockpit from "cockpit";
+
+import {
+  fetchClusterJsonDownload,
+  fetchSshKeyBundleDownload,
+} from "../services/api/config-download";
+import type { DownloadAsset } from "../services/api/config-download";
 
 type DownloadStatus = "loading" | "ready" | "error";
 
 interface DownloadFileDefinition {
   key: string;
   label: string;
-  filename: string;
-  paths: string[];
+  load: () => Promise<DownloadAsset>;
 }
 
 interface DownloadFileState extends DownloadFileDefinition {
   status: DownloadStatus;
-  href?: string;
-  error?: string;
+  href?: string | undefined;
+  filename?: string | undefined;
+  error?: string | undefined;
 }
 
 interface ConfigFileDownloadModalProps {
@@ -33,48 +38,16 @@ interface ConfigFileDownloadModalProps {
 
 const DOWNLOAD_FILES: DownloadFileDefinition[] = [
   {
-    key: "private-ssh-key",
-    label: "Private SSH Key 다운로드",
-    filename: "id_rsa",
-    paths: ["/root/.ssh/id_rsa"],
-  },
-  {
-    key: "public-ssh-key",
-    label: "Public SSH Key 다운로드",
-    filename: "id_rsa.pub",
-    paths: ["/root/.ssh/id_rsa.pub"],
+    key: "ssh-key-bundle",
+    label: "SSH Key 암호화 파일 다운로드",
+    load: fetchSshKeyBundleDownload,
   },
   {
     key: "cluster-json",
     label: "Cluster.json 파일 다운로드",
-    filename: "cluster.json",
-    paths: [
-      "/usr/share/cockpit/ablestack/tools/properties/cluster.json",
-      "/root/ablecube-react/tools/properties/cluster.json",
-    ],
+    load: fetchClusterJsonDownload,
   },
 ];
-
-const downloadHref = (content: string) =>
-  `data:attachment/text;charset=utf-8,${encodeURIComponent(content)}`;
-
-async function readFirstAvailable(paths: string[]) {
-  let lastError = "";
-
-  for (const path of paths) {
-    try {
-      const content = await cockpit.file(path).read();
-      if (content) {
-        return { content, path };
-      }
-      lastError = `${path} 파일이 비어 있습니다.`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  throw new Error(lastError || "파일을 읽을 수 없습니다.");
-}
 
 export default function ConfigFileDownloadModal({
   isOpen,
@@ -91,13 +64,20 @@ export default function ConfigFileDownloadModal({
     setFiles(DOWNLOAD_FILES.map((file) => ({ ...file, status: "loading" })));
 
     DOWNLOAD_FILES.forEach((file) => {
-      readFirstAvailable(file.paths)
-        .then(({ content }) => {
+      file
+        .load()
+        .then((asset) => {
           if (!isCurrent) return;
           setFiles((prev) =>
             prev.map((item) =>
               item.key === file.key
-                ? { ...item, status: "ready", href: downloadHref(content), error: undefined }
+                ? {
+                    ...item,
+                    status: "ready",
+                    href: asset.href,
+                    filename: asset.filename,
+                    error: undefined,
+                  }
                 : item
             )
           );
@@ -111,6 +91,7 @@ export default function ConfigFileDownloadModal({
                     ...item,
                     status: "error",
                     href: undefined,
+                    filename: undefined,
                     error: error instanceof Error ? error.message : String(error),
                   }
                 : item
@@ -149,7 +130,7 @@ export default function ConfigFileDownloadModal({
                 <a
                   className="pf-v6-c-button pf-m-link"
                   href={file.href}
-                  download={file.filename}
+                  download={file.filename ?? file.key}
                 >
                   파일을 다운로드 하시려면 클릭하십시오
                 </a>

@@ -35,11 +35,23 @@ import {
   StatusLoadingMessage,
 } from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
+  changeClusterSshPort,
+  cleanupCloudCenterCluster,
   CLOUD_CLUSTER_STATUS_FALLBACK,
   fetchCloudClusterStatus,
+  migrateCloudCenterVm,
+  setupCloudCenterCluster,
+  startCloudCenterVm,
+  stopCloudCenterVm,
 } from "../services/api/cloud-cluster-status";
+import {
+  fetchCloudCenterUrl,
+  fetchMonitoringCenterUrl,
+} from "../services/api/url";
 import "./status-card.scss";
 
 const CLUSTER_STATUS_META = {
@@ -124,6 +136,17 @@ export default function CloudClusterStatus() {
   const [confirmAction, setConfirmAction] = React.useState<CloudClusterConfirmAction | null>(null);
   const [isMigrationModalOpen, setIsMigrationModalOpen] = React.useState(false);
   const [isSshPortChangeModalOpen, setIsSshPortChangeModalOpen] = React.useState(false);
+  const [actionProgress, setActionProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    title: "",
+    message: "",
+  });
 
   const handleStatusError = React.useCallback((error: unknown) => {
     console.error("cloud cluster status API error:", error);
@@ -172,11 +195,116 @@ export default function CloudClusterStatus() {
     setConfirmAction(null);
   };
 
+  const runProgressAction = async (
+    title: string,
+    runningMessage: string,
+    successMessage: string,
+    fallbackErrorMessage: string,
+    actionRunner: () => Promise<void>
+  ) => {
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      title,
+      message: runningMessage,
+    });
+
+    try {
+      await actionRunner();
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        title,
+        message: successMessage,
+      });
+    } catch (error) {
+      console.error(`${title} API error:`, error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title,
+        message: error instanceof Error ? error.message : fallbackErrorMessage,
+      });
+    }
+  };
+
+  const openExternalUrl = async (title: string, fetcher: () => Promise<string>) => {
+    const targetWindow = window.open("about:blank", "_blank");
+
+    if (!targetWindow) {
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title,
+        message: "브라우저 팝업 차단을 해제한 후 다시 시도해주세요.",
+      });
+      return;
+    }
+
+    try {
+      targetWindow.document.title = title;
+      targetWindow.document.body.textContent = "연결 주소를 확인하는 중입니다.";
+
+      const url = await fetcher();
+
+      targetWindow.opener = null;
+      targetWindow.location.href = url;
+    } catch (error) {
+      targetWindow.close();
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title,
+        message: error instanceof Error
+          ? error.message
+          : `${title} 주소 조회에 실패했습니다.`,
+      });
+    }
+  };
+
   const confirmCloudClusterAction = () => {
     if (!confirmAction) return;
-    // TODO: 백엔드 API 전환 후 기존 card-cloud-cluster-status.py, create_address.py, wall 설정 호출로 연결합니다.
-    console.log("cloud cluster action", confirmAction);
+    const action = confirmAction;
     setConfirmAction(null);
+
+    if (action === "connect") {
+      void openExternalUrl("클라우드센터 연결", fetchCloudCenterUrl);
+      return;
+    }
+
+    if (action === "monitoringDashboard") {
+      void openExternalUrl("모니터링센터 대시보드 연결", fetchMonitoringCenterUrl);
+      return;
+    }
+
+    if (action === "monitoringSetup" || action === "monitoringConfigUpdate") {
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title: CLOUD_CLUSTER_ACTIONS[action].title,
+        message: "모니터링센터 구성/수집 정보 업데이트는 SMTP, 대상 IP 등 추가 입력 화면이 필요해 후속 이관 대상으로 남겨두었습니다.",
+      });
+      return;
+    }
+
+    const runners: Record<
+      Exclude<CloudClusterConfirmAction, "connect" | "monitoringSetup" | "monitoringDashboard" | "monitoringConfigUpdate">,
+      () => Promise<void>
+    > = {
+      start: startCloudCenterVm,
+      stop: stopCloudCenterVm,
+      cleanup: cleanupCloudCenterCluster,
+      bootstrap: setupCloudCenterCluster,
+    };
+    const title = CLOUD_CLUSTER_ACTIONS[action].title;
+
+    void runProgressAction(
+      title,
+      `${title}를 진행중입니다.`,
+      `${title}가 완료되었습니다.`,
+      `${title}에 실패했습니다.`,
+      runners[action]
+    );
   };
 
   const openMigrationModal = () => {
@@ -189,9 +317,14 @@ export default function CloudClusterStatus() {
   };
 
   const confirmMigration = (targetNode: string) => {
-    // TODO: 백엔드 API 전환 후 card-cloud-cluster-status.py pcsMigration --target 호출로 연결합니다.
-    console.log("cloud vm migration", targetNode);
     setIsMigrationModalOpen(false);
+    void runProgressAction(
+      "클라우드센터VM 마이그레이션",
+      "클라우드센터VM 마이그레이션을 진행중입니다.",
+      "클라우드센터VM 마이그레이션이 완료되었습니다.",
+      "클라우드센터VM 마이그레이션에 실패했습니다.",
+      () => migrateCloudCenterVm(targetNode)
+    );
   };
 
   const openSshPortChangeModal = () => {
@@ -204,9 +337,18 @@ export default function CloudClusterStatus() {
   };
 
   const confirmSshPortChange = (beforePort: string, afterPort: string) => {
-    // TODO: 백엔드 API 전환 후 security_patch.py --ssh-port before -P after --port-change 호출로 연결합니다.
-    console.log("ssh port change", beforePort, afterPort);
     setIsSshPortChangeModalOpen(false);
+    void runProgressAction(
+      "SSH Port 변경",
+      "SSH Port 변경을 진행중입니다.",
+      "SSH Port 변경이 완료되었습니다.",
+      "SSH Port 변경에 실패했습니다.",
+      () => changeClusterSshPort(Number(beforePort), Number(afterPort))
+    );
+  };
+
+  const closeActionProgressModal = () => {
+    setActionProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   return (
@@ -378,6 +520,14 @@ export default function CloudClusterStatus() {
         isOpen={isSshPortChangeModalOpen}
         onClose={closeSshPortChangeModal}
         onConfirm={confirmSshPortChange}
+      />
+
+      <ActionProgressModal
+        isOpen={actionProgress.isOpen}
+        title={actionProgress.title}
+        phase={actionProgress.phase}
+        message={actionProgress.message}
+        onClose={closeActionProgressModal}
       />
     </Card>
   );

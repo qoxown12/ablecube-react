@@ -26,7 +26,8 @@ import {
 } from "@patternfly/react-icons";
 
 import GfsDiskActionModal from "./gfs-disk-action-modal";
-import type { GfsDiskAction } from "./gfs-disk-action-modal";
+import type { GfsDiskAction, GfsDiskActionSelection } from "./gfs-disk-action-modal";
+import DiskImageActionModal from "./disk-image-action-modal";
 import GfsMountInfoModal from "./gfs-mount-info-modal";
 import type { GfsMountInfo } from "./gfs-mount-info-modal";
 import {
@@ -35,11 +36,24 @@ import {
   StatusLoadingMessage,
 } from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
+import TextInputConfirmModal from "../components/common/TextInputConfirmModal";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
+import {
+  addExtendGfsDisk,
+  deleteGfsDisk,
+  extendGfsDisk,
+  updateGfsFenceMaintenance,
+} from "../services/api/gfs-manage";
 import {
   fetchGfsIntegrationStatus,
   GFS_INTEGRATION_STATUS_FALLBACK,
 } from "../services/api/gfs-integration-status";
+import {
+  createRbdImages,
+  deleteRbdImages,
+} from "../services/api/rbd-manage";
 import "./status-card.scss";
 
 const STATUS_META = {
@@ -61,7 +75,7 @@ const STATUS_META = {
 };
 
 type GfsIntegrationMaintenanceAction = "set" | "unset";
-type GfsDiskImageAction = "add" | "delete";
+type GfsDiskImageAction = "add";
 
 const MAINTENANCE_ACTION_MESSAGES: Record<
 GfsIntegrationMaintenanceAction,
@@ -88,11 +102,6 @@ GfsDiskImageAction,
     message: "GFS 통합 디스크 이미지를 추가하시겠습니까?",
     confirmLabel: "추가",
   },
-  delete: {
-    title: "디스크 이미지 삭제",
-    message: "GFS 통합 디스크 이미지를 삭제하시겠습니까?",
-    confirmLabel: "삭제",
-  },
 };
 
 export default function GfsIntegrationStatus() {
@@ -102,7 +111,19 @@ export default function GfsIntegrationStatus() {
     React.useState<GfsIntegrationMaintenanceAction | null>(null);
   const [diskImageAction, setDiskImageAction] =
     React.useState<GfsDiskImageAction | null>(null);
+  const [isDiskImageDeleteModalOpen, setIsDiskImageDeleteModalOpen] = React.useState(false);
   const [selectedMountInfo, setSelectedMountInfo] = React.useState<GfsMountInfo | null>(null);
+  const [actionProgress, setActionProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    title: "",
+    message: "",
+  });
 
   const handleStatusError = React.useCallback((error: unknown) => {
     console.error("gfs integration status API error:", error);
@@ -124,10 +145,91 @@ export default function GfsIntegrationStatus() {
     setGfsDiskAction(null);
   };
 
-  const confirmGfsDiskAction = (action: Exclude<GfsDiskAction, "info">, selectedIds: string[]) => {
-    // TODO: 백엔드 API 전환 후 GFS integration disk add/delete/extend API로 연결합니다.
-    console.log("gfs integration disk action", action, selectedIds);
+  const runProgressAction = async (
+    title: string,
+    runningMessage: string,
+    successMessage: string,
+    fallbackErrorMessage: string,
+    actionRunner: () => Promise<void>
+  ) => {
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      title,
+      message: runningMessage,
+    });
+
+    try {
+      await actionRunner();
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        title,
+        message: successMessage,
+      });
+    } catch (error) {
+      console.error(`${title} API error:`, error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title,
+        message: error instanceof Error ? error.message : fallbackErrorMessage,
+      });
+    }
+  };
+
+  const confirmGfsDiskAction = (
+    action: Exclude<GfsDiskAction, "info">,
+    selection: GfsDiskActionSelection
+  ) => {
     setGfsDiskAction(null);
+
+    if (action === "add") {
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title: "GFS 디스크 추가",
+        message: "GFS 디스크 추가 전용 API가 아직 확인되지 않았습니다. 기존 GFS 확장은 'GFS 디스크 확장'에서 새 LUN 디스크 추가를 사용해주세요.",
+      });
+      return;
+    }
+
+    const selectedGfsDisk = selection.selectedGfsDisks[0];
+
+    if (!selectedGfsDisk) {
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title: action === "delete" ? "GFS 디스크 삭제" : "GFS 디스크 확장",
+        message: "선택한 GFS 디스크 정보를 확인할 수 없습니다.",
+      });
+      return;
+    }
+
+    if (action === "delete") {
+      void runProgressAction(
+        "GFS 디스크 삭제",
+        "GFS 디스크 삭제를 진행중입니다.",
+        "GFS 디스크 삭제가 완료되었습니다.",
+        "GFS 디스크 삭제에 실패했습니다.",
+        () => deleteGfsDisk(selectedGfsDisk)
+      );
+      return;
+    }
+
+    void runProgressAction(
+      "GFS 디스크 확장",
+      "GFS 디스크 확장을 진행중입니다.",
+      "GFS 디스크 확장이 완료되었습니다.",
+      "GFS 디스크 확장에 실패했습니다.",
+      () => selection.extendMethod === "add-lun"
+        ? addExtendGfsDisk(
+          selectedGfsDisk,
+          selection.selectedCandidateIds,
+          selection.isNoDowntime
+        )
+        : extendGfsDisk(selectedGfsDisk, selection.isNoDowntime)
+    );
   };
 
   const openMaintenanceActionModal = (action: GfsIntegrationMaintenanceAction) => {
@@ -140,12 +242,28 @@ export default function GfsIntegrationStatus() {
   };
 
   const confirmMaintenanceAction = () => {
-    // TODO: 백엔드 API 전환 후 GFS fence maintenance API로 연결합니다.
-    console.log("gfs integration maintenance action", maintenanceAction);
+    if (!maintenanceAction) return;
+
+    const action = maintenanceAction;
+    const title = MAINTENANCE_ACTION_MESSAGES[action].title;
+
     setMaintenanceAction(null);
+    void runProgressAction(
+      title,
+      `${title}을 진행중입니다.`,
+      `${title}이 완료되었습니다.`,
+      `${title}에 실패했습니다.`,
+      () => updateGfsFenceMaintenance(action)
+    );
   };
 
-  const openDiskImageActionModal = (action: GfsDiskImageAction) => {
+  const openDiskImageActionModal = (action: GfsDiskImageAction | "delete") => {
+    if (action === "delete") {
+      setIsDiskImageDeleteModalOpen(true);
+      setIsOpen(false);
+      return;
+    }
+
     setDiskImageAction(action);
     setIsOpen(false);
   };
@@ -154,10 +272,44 @@ export default function GfsIntegrationStatus() {
     setDiskImageAction(null);
   };
 
-  const confirmDiskImageAction = () => {
-    // TODO: 백엔드 API 전환 후 GFS disk image add/delete API로 연결합니다.
-    console.log("gfs integration disk image action", diskImageAction);
+  const confirmDiskImageAction = (sizeValue: string) => {
+    const sizeGiB = Number(sizeValue);
+
     setDiskImageAction(null);
+
+    if (!Number.isInteger(sizeGiB) || sizeGiB <= 0) {
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title: "디스크 이미지 추가",
+        message: "디스크 이미지 용량은 1 이상의 정수 GiB로 입력해주세요.",
+      });
+      return;
+    }
+
+    void runProgressAction(
+      "디스크 이미지 추가",
+      "디스크 이미지 추가를 진행중입니다.",
+      "디스크 이미지 추가가 완료되었습니다.",
+      "디스크 이미지 추가에 실패했습니다.",
+      () => createRbdImages(sizeGiB)
+    );
+  };
+
+  const closeDiskImageDeleteModal = () => {
+    setIsDiskImageDeleteModalOpen(false);
+  };
+
+  const confirmDiskImageDelete = (selectedIds: string[]) => {
+    setIsDiskImageDeleteModalOpen(false);
+
+    void runProgressAction(
+      "디스크 이미지 삭제",
+      "디스크 이미지 삭제를 진행중입니다.",
+      "디스크 이미지 삭제가 완료되었습니다.",
+      "디스크 이미지 삭제에 실패했습니다.",
+      () => deleteRbdImages(selectedIds)
+    );
   };
 
   const openMountInfoModal = (mountInfo: GfsMountInfo) => {
@@ -166,6 +318,10 @@ export default function GfsIntegrationStatus() {
 
   const closeMountInfoModal = () => {
     setSelectedMountInfo(null);
+  };
+
+  const closeActionProgressModal = () => {
+    setActionProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const renderStatusDetail = (statusKey: string, detail?: string, detailLines?: string[]) => {
@@ -351,15 +507,33 @@ export default function GfsIntegrationStatus() {
       )}
 
       {diskImageActionMessage && (
-        <ConfirmActionModal
+        <TextInputConfirmModal
           isOpen={diskImageAction !== null}
           title={diskImageActionMessage.title}
           message={diskImageActionMessage.message}
+          inputLabel="전체 용량(GiB)"
+          placeholder="예: 5000"
+          warning="입력한 전체 용량은 2TiB 단위의 RBD 이미지로 나뉘어 생성됩니다."
+          checkLabel="디스크 이미지 추가 확인"
           confirmLabel={diskImageActionMessage.confirmLabel}
           onClose={closeDiskImageActionModal}
           onConfirm={confirmDiskImageAction}
         />
       )}
+
+      <DiskImageActionModal
+        isOpen={isDiskImageDeleteModalOpen}
+        onClose={closeDiskImageDeleteModal}
+        onConfirm={confirmDiskImageDelete}
+      />
+
+      <ActionProgressModal
+        isOpen={actionProgress.isOpen}
+        title={actionProgress.title}
+        phase={actionProgress.phase}
+        message={actionProgress.message}
+        onClose={closeActionProgressModal}
+      />
     </Card>
   );
 }

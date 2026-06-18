@@ -72,6 +72,13 @@
 }
 
 /* 버튼 border 제거 */
+.ct-status-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
 .ct-status-buttons .pf-c-button {
     border: none !important;
     border-color: transparent !important;
@@ -257,6 +264,48 @@
 
   svg {
     color: #0066cc;
+  }
+}
+
+.ct-ribbon-action-notice-modal {
+  width: min(520px, calc(100vw - 32px));
+  border-radius: 22px;
+  box-shadow: 0 18px 38px rgb(0 0 0 / 18%);
+
+  .pf-v6-c-modal-box__close {
+    inset-block-start: 10px;
+    inset-inline-end: 18px;
+  }
+
+  .pf-v6-c-modal-box__header {
+    padding-block-start: 42px;
+    padding-inline: 24px;
+  }
+
+  .pf-v6-c-modal-box__title {
+    color: #151515;
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1.35;
+  }
+
+  .pf-v6-c-modal-box__body {
+    padding-block-start: 18px;
+    padding-inline: 24px;
+    color: #151515;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .pf-v6-c-modal-box__footer {
+    padding-block: 16px 28px;
+    padding-inline: 24px;
+  }
+
+  .pf-v6-c-button.pf-m-primary {
+    min-width: 72px;
+    border-radius: 999px;
+    font-weight: 700;
   }
 }
 

@@ -52,7 +52,7 @@
   - 클라우드 VM 배포/변경
   - 스토리지 VM 배포/상태/리소스 변경
   - 모니터링/Wall 관련 마법사
-  - 자동 종료, DB 백업, PowerFlex/PFMP 관련 부가 기능
+  - 자동 종료, DB 백업 등 부가 기능
 - 구버전의 Python3 백엔드 기능은 `python/` 하위 모듈에 분산되어 있으며, 신규 구조에서는 해당 기능을 HTTP API로 노출한 뒤 React에서 service layer를 통해 호출한다.
 
 ## 재구성 원칙
@@ -205,8 +205,63 @@ src/
 - React 목표
   - 카드 드롭다운 메뉴는 카드 컴포넌트에서 정의하되, 실제 액션 실행 흐름은 `ActionModal` 계층으로 분리한다.
   - `ablestack-cockpit-plugin`의 모달 문구, 확인 절차, 체크박스, 목록 선택, 위험 작업 확인 흐름을 먼저 분석한 뒤 React/PatternFly 6 구조로 재구성한다.
-  - 메뉴 클릭 시 바로 실행하지 않는다. 구버전과 동일하게 모달에서 사용자가 확인/선택/체크한 뒤 실행한다.
-  - Python/Shell command 명령어는 React modal이 알지 않도록 하고, `services/api`의 액션 함수에만 매핑한다.
+- 메뉴 클릭 시 바로 실행하지 않는다. 구버전과 동일하게 모달에서 사용자가 확인/선택/체크한 뒤 실행한다.
+- Python/Shell command 명령어는 React modal이 알지 않도록 하고, `services/api`의 액션 함수에만 매핑한다.
+- 팝업 안에서 목록을 보여주는 액션은 하드코딩 샘플을 두지 않고, 모달이 열릴 때 API로 최신 데이터를 조회한다.
+- `WWN 목록 조회`는 `POST /api/v1/cube/hba/manage`의 `list-hba-wwn` 결과를 표시한다.
+- `GFS 디스크 추가/확장 후보`, `CLVM 디스크 추가 후보`, `로컬 디스크 구성 후보`는 `GET /api/v1/cube/disk?action=gfs` 결과를 표시한다.
+  - 2026-06-05 확인: 현재 API 호스트 `10.10.32.2:8090`의 `action=gfs` 실제 응답은 `/dev/sdb`~`/dev/sdf`와 RBD 장치가 포함되며, 기존 샘플 `/dev/mapper/mpathb`, `/dev/mapper/mpathc` 값은 반환되지 않는다.
+  - 2026-06-05 확인: API 호스트를 `10.10.12.2:8090`로 변경하면 `action=gfs` 실제 응답은 top-level `/dev/mapper/mpatha` 아래 `mpatha1` 파티션과 LVM이 달린 구조로 반환된다.
+  - GFS/CLVM/로컬 디스크 후보 UI에서는 API 응답에 RBD 장치가 섞여 내려와도 물리/공유 디스크 후보로 노출하지 않도록 RBD 계열을 제외한다.
+  - GFS/CLVM/로컬 디스크 후보 UI에서는 `part`, `lvm` 장치를 후보로 노출하지 않고, 파티션이 존재하는 top-level `disk`/`mpath` 장치는 선택 불가 상태로 표시한다.
+- `GFS 디스크 삭제/확장/상세 정보`는 `GET /api/v1/cube/gfs/disk/status` 결과를 표시한다.
+- `CLVM 디스크 삭제/정보`는 `POST /api/v1/cube/clvm/manage`의 `list-clvm` 결과를 표시한다.
+- `디스크 이미지 삭제`는 `GET /api/v1/cube/disk?action=rbd` 결과를 표시한다.
+- `클라우드센터VM 스냅샷 복구`는 `POST /api/v1/cube/ccvm/snap`의 `list` 결과를 선택 목록으로 표시한다.
+- 2026-06-18 반영: 카드 액션 중 API가 확인된 항목은 React `services/api` 호출로 연결했다.
+  - GFS 펜스 유지보수 설정/해제: `POST /api/v1/cube/gfs/manage`의 `check-stonith` + `security-disable|security-enable`
+  - GFS 디스크 삭제/확장/새 LUN 추가 확장: `delete-gfs`, `extend`, `add-extend`
+  - CLVM 디스크 추가/삭제: `POST /api/v1/cube/clvm/manage`의 `create-clvm`, `delete-clvm`
+  - GFS용 RBD 이미지 추가/삭제: `POST /api/v1/cube/rbd/manage`의 `create`, `delete`
+  - 외부 스토리지 재검색: `POST /api/v1/cube/gfs/manage`의 `scan`
+  - 클라우드센터VM 스냅샷 백업/복구, Mold 서비스/DB 제어, 자원변경, secondary resize, 즉시 DB 백업을 API로 연결했다.
+  - 스토리지센터VM 시작/정지/삭제/자원변경과 전체 시스템 자동 종료 절차를 API로 연결했다.
+  - 클라우드센터 클러스터 시작/정지/클린업/마이그레이션/구성, SSH Port 변경, 클라우드센터/모니터링센터 URL 연결을 API로 연결했다.
+  - API가 불명확하거나 추가 입력 화면이 필요한 `GFS 디스크 추가`, `외부 스토리지 동기화`, `호스트 제거`, `정기 DB 백업/삭제 관리`, `모니터링센터 구성/수집 정보 업데이트`는 콘솔 실행 대신 사용자 안내 모달로 처리한다.
+
+### 상단 리본 액션 버튼
+
+- 구버전 `ablestack-cockpit-plugin/main.html` 기준 상단 리본 버튼은 다음 전체 목록을 기준으로 한다.
+  - 클러스터 구성 준비
+  - 스토리지센터 VM 배포
+  - 클라우드센터 VM 배포
+  - 스토리지센터 대시보드 연결
+  - GFS 스토리지 구성
+  - HCI 공유 파일 구성
+  - 로컬 스토리지 구성
+  - 클라우드센터 연결
+  - 모니터링센터 구성
+  - 모니터링센터 대시보드 연결
+  - 설정파일 다운로드
+  - 라이센스 관리
+  - 보안 업데이트
+  - ABLESTACK Version 업데이트
+- `스토리지센터 대시보드 연결`, `클라우드센터 연결`, `모니터링센터 대시보드 연결`은 `GET /api/v1/cube/url?option=storageCenter|cloudCenter|wallCenter` 결과를 사용한다.
+- 2026-06-05 확인: `10.10.12.2:8090` 기준 `cloudCenter`, `wallCenter`는 URL을 반환하고, `storageCenter`는 현재 cluster type에서 `unsupported cluster type`을 반환한다.
+- HCI 공유 파일 구성, 보안 업데이트, ABLESTACK Version 업데이트는 구버전 버튼을 React 상단 리본에 노출하되, 세부 실행 화면/API 연결은 후속 이관 대상으로 둔다.
+- 2026-06-05 반영: `로컬 스토리지 구성`은 구버전 `local-storage-configure-wizard.html/js` 흐름을 기준으로 React wizard로 이관했다.
+  - 단계: 개요 → 로컬 디스크 구성 → 설정확인 → 배포 → 완료
+  - 디스크 후보: `GET /api/v1/cube/disk?action=gfs`를 `fetchGfsDiskCandidates()`로 조회
+  - 배포 실행: `POST /api/v1/cube/local/manage`의 `reset` 실행 후 `create-local-disk` 실행
+  - 파티션이 존재하는 후보는 선택 불가 상태로 표시하고, 선택한 디스크만 `disks` 배열로 전달한다.
+- 2026-06-05 반영: `설정파일 다운로드` 팝업은 로컬 파일 직접 읽기 대신 API 기준 다운로드로 전환했다.
+  - SSH Key: `POST /api/v1/cube/ssh/key` body `{"action":"download"}`를 호출한다. API는 private/public key 개별 파일이 아니라 AES-GCM 암호화 단일 `.dat` 번들을 반환한다.
+  - Cluster.json: 전체 원본 `cluster.json` 다운로드 API는 현재 `/root/ablestack-API`에서 확인되지 않아, `GET /api/v1/cube/cluster/config`와 `GET /api/v1/cube/system/config` 응답을 조합해 `cluster.json`으로 내려준다.
+  - React 구현은 브라우저 직접 `fetch` 대신 Cockpit 세션의 `curl` 호출을 사용해 Cockpit HTTPS 화면과 API HTTP 주소 간 혼합 콘텐츠 영향을 피한다.
+- 2026-06-05 반영: `라이센스 관리` 팝업은 구버전 `register_license.py` 직접 실행 대신 `POST /api/v1/cube/license` API로 전환했다.
+  - 상태 조회: body `{"action":"status"}`. `code=200`이면 `val.status/issued/expired/oem`을 표시하고, `code=404`는 미등록 상태로 표시한다.
+  - 등록 실행: 선택한 라이센스 파일을 base64로 읽어 body `{"action":"register","license_content":"...","original_filename":"..."}`로 전달한다.
+  - 등록 성공 후 현재 팝업 안에서 라이센스 상태를 다시 조회한다.
 
 #### 공통화 대상
 
@@ -296,7 +351,6 @@ src/
   - `cloud-vm-wizard.js`
   - `storage-vm-wizard.js`
   - `wall-monitoring-wizard.js`
-  - `pfmp-vm-wizard.js`
 - React 현재
   - `src/wizard/*`
 - 작업 방향

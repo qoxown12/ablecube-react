@@ -29,7 +29,7 @@ import {
 } from "@patternfly/react-icons";
 
 import ClvmDiskActionModal from "./clvm-disk-action-modal";
-import type { ClvmDiskAction } from "./clvm-disk-action-modal";
+import type { ClvmDiskAction, ClvmDiskActionSelection } from "./clvm-disk-action-modal";
 import StorageClusterHealthChecksModal from "./storage-cluster-health-checks-modal";
 import {
   STATUS_LOADING_LABEL,
@@ -45,6 +45,14 @@ import type { MaintenanceModeAction } from "../components/common/MaintenanceMode
 import ActionProgressModal from "../components/common/ActionProgressModal";
 import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
+import {
+  runAutoShutdownSequence,
+} from "../services/api/auto-shutdown";
+import {
+  createClvmDisks,
+  deleteClvmDisks,
+} from "../services/api/clvm-manage";
+import { scanGfsStorageDevices } from "../services/api/gfs-manage";
 import {
   fetchStorageCenterUrl,
   fetchStorageClusterStatus,
@@ -99,9 +107,40 @@ export default function StorageClusterStatus() {
   const [isGlueUpdateModalOpen, setIsGlueUpdateModalOpen] = React.useState(false);
   const [isExternalStorageSyncModalOpen, setIsExternalStorageSyncModalOpen] = React.useState(false);
   const [isExternalStorageRescanModalOpen, setIsExternalStorageRescanModalOpen] = React.useState(false);
+  const [externalStorageProgress, setExternalStorageProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    title: "",
+    message: "",
+  });
   const [clvmDiskAction, setClvmDiskAction] = React.useState<ClvmDiskAction | null>(null);
+  const [clvmProgress, setClvmProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    title: "",
+    message: "",
+  });
   const [isWwnListModalOpen, setIsWwnListModalOpen] = React.useState(false);
   const [isAutoShutdownModalOpen, setIsAutoShutdownModalOpen] = React.useState(false);
+  const [autoShutdownProgress, setAutoShutdownProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    message: "",
+  });
   const [isRemoveCubeHostModalOpen, setIsRemoveCubeHostModalOpen] = React.useState(false);
   const [isHealthChecksModalOpen, setIsHealthChecksModalOpen] = React.useState(false);
   const [storageCenterConnectionError, setStorageCenterConnectionError] = React.useState("");
@@ -277,8 +316,13 @@ export default function StorageClusterStatus() {
   };
 
   const confirmExternalStorageSync = () => {
-    // TODO: 백엔드 API 전환 후 shell/host/multipath_sync.sh sync 호출로 연결합니다.
     setIsExternalStorageSyncModalOpen(false);
+    setExternalStorageProgress({
+      isOpen: true,
+      phase: "error",
+      title: "외부 스토리지 동기화",
+      message: "multipath 설정 동기화까지 수행하는 API가 아직 확인되지 않았습니다. 현재 연결 가능한 API는 외부 스토리지 재검색입니다.",
+    });
   };
 
   const openExternalStorageRescanModal = () => {
@@ -290,9 +334,38 @@ export default function StorageClusterStatus() {
     setIsExternalStorageRescanModalOpen(false);
   };
 
-  const confirmExternalStorageRescan = () => {
-    // TODO: 백엔드 API 전환 후 shell/host/multipath_sync.sh rescan 호출로 연결합니다.
+  const confirmExternalStorageRescan = async () => {
     setIsExternalStorageRescanModalOpen(false);
+    setExternalStorageProgress({
+      isOpen: true,
+      phase: "running",
+      title: "외부 스토리지 재검색",
+      message: "외부 스토리지 재검색을 진행중입니다.",
+    });
+
+    try {
+      await scanGfsStorageDevices();
+      setExternalStorageProgress({
+        isOpen: true,
+        phase: "success",
+        title: "외부 스토리지 재검색",
+        message: "외부 스토리지 재검색이 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("external storage rescan API error:", error);
+      setExternalStorageProgress({
+        isOpen: true,
+        phase: "error",
+        title: "외부 스토리지 재검색",
+        message: error instanceof Error
+          ? error.message
+          : "외부 스토리지 재검색에 실패했습니다.",
+      });
+    }
+  };
+
+  const closeExternalStorageProgressModal = () => {
+    setExternalStorageProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const openClvmDiskActionModal = (action: ClvmDiskAction) => {
@@ -304,10 +377,48 @@ export default function StorageClusterStatus() {
     setClvmDiskAction(null);
   };
 
-  const confirmClvmDiskAction = (action: Exclude<ClvmDiskAction, "info">, selectedIds: string[]) => {
-    // TODO: 백엔드 API 전환 후 add는 --create-clvm, delete는 --delete-clvm 호출로 연결합니다.
-    console.log("CLVM disk action", action, selectedIds);
+  const confirmClvmDiskAction = async (
+    action: Exclude<ClvmDiskAction, "info">,
+    selection: ClvmDiskActionSelection
+  ) => {
     setClvmDiskAction(null);
+    const title = action === "add" ? "CLVM 디스크 추가" : "CLVM 디스크 삭제";
+
+    setClvmProgress({
+      isOpen: true,
+      phase: "running",
+      title,
+      message: `${title}를 진행중입니다.`,
+    });
+
+    try {
+      if (action === "add") {
+        await createClvmDisks(selection.selectedIds);
+      } else {
+        await deleteClvmDisks(selection.selectedClvmDisks);
+      }
+
+      setClvmProgress({
+        isOpen: true,
+        phase: "success",
+        title,
+        message: `${title}가 완료되었습니다.`,
+      });
+    } catch (error) {
+      console.error("CLVM disk action API error:", error);
+      setClvmProgress({
+        isOpen: true,
+        phase: "error",
+        title,
+        message: error instanceof Error
+          ? error.message
+          : `${title}에 실패했습니다.`,
+      });
+    }
+  };
+
+  const closeClvmProgressModal = () => {
+    setClvmProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const openWwnListModal = () => {
@@ -328,9 +439,35 @@ export default function StorageClusterStatus() {
     setIsAutoShutdownModalOpen(false);
   };
 
-  const confirmAutoShutdown = () => {
-    // TODO: 백엔드 API 전환 후 auto-shutdown.py의 cloud VM stop, noout set, SCVM stop, host shutdown 순서로 연결합니다.
+  const confirmAutoShutdown = async () => {
     setIsAutoShutdownModalOpen(false);
+    setAutoShutdownProgress({
+      isOpen: true,
+      phase: "running",
+      message: "전체 시스템 자동 종료 절차를 진행중입니다.",
+    });
+
+    try {
+      await runAutoShutdownSequence();
+      setAutoShutdownProgress({
+        isOpen: true,
+        phase: "success",
+        message: "전체 시스템 자동 종료 절차 요청이 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("auto shutdown API error:", error);
+      setAutoShutdownProgress({
+        isOpen: true,
+        phase: "error",
+        message: error instanceof Error
+          ? error.message
+          : "전체 시스템 자동 종료 절차에 실패했습니다.",
+      });
+    }
+  };
+
+  const closeAutoShutdownProgressModal = () => {
+    setAutoShutdownProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const openRemoveCubeHostModal = () => {
@@ -343,8 +480,13 @@ export default function StorageClusterStatus() {
   };
 
   const confirmRemoveCubeHost = () => {
-    // TODO: 백엔드 API 전환 후 python/cluster/remove_cube_host.py remove 호출로 연결합니다.
     setIsRemoveCubeHostModalOpen(false);
+    setClvmProgress({
+      isOpen: true,
+      phase: "error",
+      title: "Cube 호스트 제거",
+      message: "Cube 호스트 제거는 실제 cluster.json 호스트 목록과 remove API payload 매핑을 확인한 뒤 연결해야 합니다.",
+    });
   };
 
   const closeHealthChecksModal = () => {
@@ -592,11 +734,27 @@ export default function StorageClusterStatus() {
         onConfirm={confirmExternalStorageRescan}
       />
 
+      <ActionProgressModal
+        isOpen={externalStorageProgress.isOpen}
+        title={externalStorageProgress.title}
+        phase={externalStorageProgress.phase}
+        message={externalStorageProgress.message}
+        onClose={closeExternalStorageProgressModal}
+      />
+
       <ClvmDiskActionModal
         action={clvmDiskAction}
         isOpen={clvmDiskAction !== null}
         onClose={closeClvmDiskActionModal}
         onConfirm={confirmClvmDiskAction}
+      />
+
+      <ActionProgressModal
+        isOpen={clvmProgress.isOpen}
+        title={clvmProgress.title}
+        phase={clvmProgress.phase}
+        message={clvmProgress.message}
+        onClose={closeClvmProgressModal}
       />
 
       <WwnListModal
@@ -612,6 +770,14 @@ export default function StorageClusterStatus() {
         checkLabel="볼륨 마운트 해제 확인"
         onClose={closeAutoShutdownModal}
         onConfirm={confirmAutoShutdown}
+      />
+
+      <ActionProgressModal
+        isOpen={autoShutdownProgress.isOpen}
+        title="전체 시스템 자동 종료"
+        phase={autoShutdownProgress.phase}
+        message={autoShutdownProgress.message}
+        onClose={closeAutoShutdownProgressModal}
       />
 
       <CheckedConfirmActionModal

@@ -486,6 +486,13 @@
   color: #6a6e73;
 }
 
+.ct-wwn-list-modal__error {
+  color: #c9190b;
+  font-family: monospace;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .ct-gfs-disk-info {
   display: grid;
   gap: 6px;

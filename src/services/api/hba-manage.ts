@@ -4,6 +4,7 @@ export interface HbaWwnInfo {
   hostname: string;
   target: string;
   wwn: string[];
+  error: string;
 }
 
 interface HbaManageResponse {
@@ -56,6 +57,7 @@ function mapHbaWwnInfo(value: unknown): HbaWwnInfo | null {
     hostname: normalizeString(value.hostname) || "N/A",
     target: normalizeString(value.target) || "N/A",
     wwn: normalizeWwnList(value.wwn),
+    error: normalizeString(value.error),
   };
 }
 
@@ -70,11 +72,11 @@ export async function fetchHbaWwnList(): Promise<HbaWwnInfo[]> {
     }
   );
 
-  if (parsed.code !== undefined && String(parsed.code) !== "200") {
-    throw new Error(getApiErrorMessage(parsed));
-  }
-
   if (!Array.isArray(parsed.val)) {
+    if (parsed.code !== undefined && String(parsed.code) !== "200") {
+      throw new Error(getApiErrorMessage(parsed));
+    }
+
     throw new Error("HBA WWN 목록 조회 응답 형식이 올바르지 않습니다.");
   }
 

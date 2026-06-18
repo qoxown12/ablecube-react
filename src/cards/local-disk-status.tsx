@@ -32,11 +32,16 @@ import {
   StatusLoadingIcon,
   StatusLoadingMessage,
 } from "./status-loading";
+import LocalDiskActionModal from "./local-disk-action-modal";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
+  createLocalDisk,
   fetchLocalDiskStatus,
   LOCAL_DISK_STATUS_FALLBACK,
+  resetLocalDisk,
 } from "../services/api/local-disk-status";
 import "./status-card.scss";
 
@@ -104,6 +109,18 @@ function renderValue(value: string) {
 export default function LocalDiskStatus() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [confirmAction, setConfirmAction] = React.useState<LocalDiskAction | null>(null);
+  const [isConfigureModalOpen, setIsConfigureModalOpen] = React.useState(false);
+  const [actionProgress, setActionProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    title: "",
+    message: "",
+  });
 
   const handleStatusError = React.useCallback((error: unknown) => {
     console.error("local disk status API error:", error);
@@ -130,6 +147,12 @@ export default function LocalDiskStatus() {
   const onSelect = () => setIsOpen(false);
 
   const openConfirmActionModal = (action: LocalDiskAction) => {
+    if (action === "configure") {
+      setIsConfigureModalOpen(true);
+      setIsOpen(false);
+      return;
+    }
+
     setConfirmAction(action);
     setIsOpen(false);
   };
@@ -138,11 +161,75 @@ export default function LocalDiskStatus() {
     setConfirmAction(null);
   };
 
-  const confirmLocalDiskAction = () => {
+  const closeConfigureModal = () => {
+    setIsConfigureModalOpen(false);
+  };
+
+  const confirmLocalDiskConfigure = async (selectedIds: string[]) => {
+    setIsConfigureModalOpen(false);
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      title: "로컬 디스크 구성",
+      message: "로컬 디스크 구성을 진행중입니다.",
+    });
+
+    try {
+      await createLocalDisk(selectedIds);
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        title: "로컬 디스크 구성",
+        message: "로컬 디스크 구성이 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("local disk configure API error:", error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title: "로컬 디스크 구성",
+        message: error instanceof Error
+          ? error.message
+          : "로컬 디스크 구성 요청에 실패했습니다.",
+      });
+    }
+  };
+
+  const confirmLocalDiskAction = async () => {
     if (!confirmAction) return;
-    // TODO: 백엔드 API 전환 후 create-local-disk/reset 액션으로 연결합니다.
-    console.log("local disk action", confirmAction);
+
+    const title = LOCAL_DISK_ACTIONS[confirmAction].title;
     setConfirmAction(null);
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      title,
+      message: "로컬 디스크 초기화를 진행중입니다.",
+    });
+
+    try {
+      await resetLocalDisk();
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        title,
+        message: "로컬 디스크 초기화가 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("local disk reset API error:", error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title,
+        message: error instanceof Error
+          ? error.message
+          : "로컬 디스크 초기화 요청에 실패했습니다.",
+      });
+    }
+  };
+
+  const closeActionProgressModal = () => {
+    setActionProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   return (
@@ -252,6 +339,20 @@ export default function LocalDiskStatus() {
           onConfirm={confirmLocalDiskAction}
         />
       )}
+
+      <LocalDiskActionModal
+        isOpen={isConfigureModalOpen}
+        onClose={closeConfigureModal}
+        onConfirm={confirmLocalDiskConfigure}
+      />
+
+      <ActionProgressModal
+        isOpen={actionProgress.isOpen}
+        title={actionProgress.title}
+        phase={actionProgress.phase}
+        message={actionProgress.message}
+        onClose={closeActionProgressModal}
+      />
     </Card>
   );
 }

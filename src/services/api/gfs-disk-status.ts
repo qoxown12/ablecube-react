@@ -1,13 +1,21 @@
 import { requestCubeApi } from "./client";
 
 export interface GfsDiskMountInfo {
+  id: string;
   mountPath: string;
   status: string;
   devices: string;
+  deviceList: string[];
   multipaths: string;
+  multipathList: string[];
   physicalVolume: string;
   volumeGroup: string;
   diskSize: string;
+  diskIds: string[];
+  lvm: string;
+  vgName: string;
+  lvName: string;
+  gfsName: string;
   resourceStatus: string[];
 }
 
@@ -92,6 +100,12 @@ function formatList(values: string[] | undefined): string {
   return normalizedValues.length > 0 ? normalizedValues.join(", ") : "N/A";
 }
 
+function normalizeList(values: string[] | undefined): string[] {
+  return values
+    ?.map((value) => value.trim())
+    .filter(Boolean) ?? [];
+}
+
 function formatSize(size: string | undefined): string {
   const normalizedSize = size?.trim();
 
@@ -114,6 +128,32 @@ function mountResourceId(mountPath: string): string {
   const mountPathSegments = mountPath.split("/").filter(Boolean);
 
   return mountPathSegments[mountPathSegments.length - 1] ?? mountPath;
+}
+
+function parseLvmNames(lvm: string): { vgName: string; lvName: string } {
+  const segments = lvm.split("/").filter(Boolean);
+
+  if (segments.length >= 2 && segments[segments.length - 2] !== "mapper") {
+    return {
+      vgName: segments[segments.length - 2],
+      lvName: segments[segments.length - 1],
+    };
+  }
+
+  const mapperName = segments[segments.length - 1] ?? lvm;
+  const match = mapperName.match(/^(.+?)-(.+)$/);
+
+  if (match) {
+    return {
+      vgName: match[1],
+      lvName: match[2],
+    };
+  }
+
+  return {
+    vgName: mapperName || "N/A",
+    lvName: "N/A",
+  };
 }
 
 function groupedResourceStatus(resources: GfsResourceItem[]): string[] {
@@ -167,15 +207,27 @@ function mapBlockDevice(
 ): GfsDiskMountInfo {
   const lvm = blockDevice.lvm?.trim() || "N/A";
   const mountPath = blockDevice.mountpoint?.trim() || "N/A";
+  const { vgName, lvName } = parseLvmNames(lvm);
+  const deviceList = normalizeList(blockDevice.devices);
+  const multipathList = normalizeList(blockDevice.multipaths);
+  const diskIds = normalizeList(blockDevice.disk_id);
 
   return {
+    id: `${mountPath}:${lvm}`,
     mountPath,
     status: "Health OK",
-    devices: formatList(blockDevice.devices),
-    multipaths: formatList(blockDevice.multipaths),
+    devices: formatList(deviceList),
+    deviceList,
+    multipaths: formatList(multipathList),
+    multipathList,
     physicalVolume: lvm,
     volumeGroup: lvm,
     diskSize: formatSize(blockDevice.size),
+    diskIds,
+    lvm,
+    vgName,
+    lvName,
+    gfsName: mountResourceId(mountPath),
     resourceStatus: resourceStatusMap.get(mountResourceId(mountPath)) ?? ["N/A"],
   };
 }

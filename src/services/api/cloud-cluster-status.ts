@@ -33,6 +33,13 @@ interface PcsStatusResponse {
   message?: string;
 }
 
+interface CloudClusterActionResponse {
+  code?: number | string;
+  val?: unknown;
+  message?: string;
+  retname?: string;
+}
+
 export const CLOUD_CLUSTER_STATUS_FALLBACK: CloudClusterStatusData = {
   clusterStatus: "N/A",
   nodeStatus: "N/A",
@@ -123,4 +130,104 @@ export async function fetchCloudClusterStatus(): Promise<CloudClusterStatusData>
   }
 
   return mapPcsStatus(parsed.val);
+}
+
+function actionMessage(response: CloudClusterActionResponse, fallbackMessage: string): string {
+  if (typeof response.message === "string" && response.message.trim()) {
+    return response.message.trim();
+  }
+
+  if (typeof response.val === "string" && response.val.trim()) {
+    return response.val.trim();
+  }
+
+  return fallbackMessage;
+}
+
+function assertActionSuccess(response: CloudClusterActionResponse, fallbackMessage: string) {
+  if (String(response.code ?? "") !== "200") {
+    throw new Error(actionMessage(response, fallbackMessage));
+  }
+}
+
+async function runPcsControl(
+  body: Record<string, unknown>,
+  fallbackMessage: string,
+  maxTimeSeconds = 300
+): Promise<void> {
+  const parsed = await requestCubeApi<CloudClusterActionResponse>(
+    "/api/v1/cube/pcs/control",
+    {
+      method: "POST",
+      maxTimeSeconds,
+      body,
+    }
+  );
+
+  assertActionSuccess(parsed, fallbackMessage);
+}
+
+export function startCloudCenterVm(): Promise<void> {
+  return runPcsControl(
+    { action: "enable", resource: "cloudcenter_res" },
+    "클라우드센터VM 시작에 실패했습니다."
+  );
+}
+
+export function stopCloudCenterVm(): Promise<void> {
+  return runPcsControl(
+    { action: "disable", resource: "cloudcenter_res" },
+    "클라우드센터VM 정지에 실패했습니다."
+  );
+}
+
+export function cleanupCloudCenterCluster(): Promise<void> {
+  return runPcsControl(
+    { action: "cleanup", resource: "cloudcenter_res" },
+    "클라우드센터 클러스터 클린업에 실패했습니다."
+  );
+}
+
+export function migrateCloudCenterVm(targetNode: string): Promise<void> {
+  return runPcsControl(
+    { action: "move", resource: "cloudcenter_res", target: targetNode },
+    "클라우드센터VM 마이그레이션에 실패했습니다."
+  );
+}
+
+export async function setupCloudCenterCluster(): Promise<void> {
+  const parsed = await requestCubeApi<CloudClusterActionResponse>(
+    "/api/v1/cube/ccvm/lifecycle",
+    {
+      method: "POST",
+      maxTimeSeconds: 3600,
+      body: {
+        action: "setup",
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "클라우드센터 구성에 실패했습니다.");
+}
+
+export async function changeClusterSshPort(
+  beforePort: number,
+  afterPort: number
+): Promise<void> {
+  const parsed = await requestCubeApi<CloudClusterActionResponse>(
+    "/api/v1/cube/security/patch",
+    {
+      method: "POST",
+      maxTimeSeconds: 2100,
+      body: {
+        ssh_port: beforePort,
+        new_port: afterPort,
+        port_change: true,
+        targets: ["all"],
+        retname: "SSH Port 변경",
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "SSH Port 변경에 실패했습니다.");
 }

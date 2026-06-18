@@ -1,33 +1,48 @@
 // GFS 디스크 추가/삭제/확장/상세정보 모달입니다.
 import React from "react";
 import {
+  Alert,
   Button,
   Content,
   Modal,
   ModalBody,
   ModalFooter,
   ModalHeader,
+  Spinner,
 } from "@patternfly/react-core";
 import { ExclamationTriangleIcon } from "@patternfly/react-icons";
 
+import {
+  fetchGfsDiskStatus,
+  type GfsDiskMountInfo,
+} from "../services/api/gfs-disk-status";
+import {
+  fetchGfsDiskCandidates,
+  type DiskSelectionItem,
+} from "../services/api/disk";
+
 export type GfsDiskAction = "add" | "delete" | "extend" | "info";
+export type GfsExtendMethod = "resize" | "add-lun";
+
+export interface GfsDiskActionSelection {
+  selectedIds: string[];
+  selectedGfsDisks: GfsDiskMountInfo[];
+  selectedCandidateIds: string[];
+  extendMethod: GfsExtendMethod;
+  isNoDowntime: boolean;
+}
 
 interface GfsDiskActionModalProps {
   action: GfsDiskAction | null;
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (action: Exclude<GfsDiskAction, "info">, selectedIds: string[]) => void;
+  onConfirm: (
+    action: Exclude<GfsDiskAction, "info">,
+    selection: GfsDiskActionSelection
+  ) => void;
 }
 
-const AVAILABLE_DISKS = [
-  { id: "disk-image-001", label: "disk-image-001 /dev/mapper/mpathg 500G" },
-  { id: "disk-image-002", label: "disk-image-002 /dev/mapper/mpathh 1T" },
-];
-
-const GFS_DISKS = [
-  { id: "gfs-data-01", mount: "/mnt/glue-gfs", pv: "/dev/mapper/mpathg", vg: "vg_gfs01", size: "500G" },
-  { id: "gfs-data-02", mount: "/mnt/glue-gfs2", pv: "/dev/mapper/mpathh", vg: "vg_gfs02", size: "1T" },
-];
+type LoadStatus = "idle" | "loading" | "success" | "error";
 
 const ACTION_TITLE: Record<GfsDiskAction, string> = {
   add: "GFS 디스크 추가",
@@ -42,23 +57,100 @@ const toggleSelection = (values: string[], value: string) => (
     : [...values, value]
 );
 
+const singleSelection = (values: string[], value: string) => (
+  values.includes(value) ? [] : [value]
+);
+
+function gfsDiskLabel(disk: GfsDiskMountInfo): string {
+  return [
+    disk.mountPath,
+    disk.multipaths,
+    disk.diskSize,
+  ].filter(Boolean).join(" ");
+}
+
 export default function GfsDiskActionModal({
   action,
   isOpen,
   onClose,
   onConfirm,
 }: GfsDiskActionModalProps) {
-  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
-  const [extendMethod, setExtendMethod] = React.useState("resize");
+  const [selectedCandidateIds, setSelectedCandidateIds] = React.useState<string[]>([]);
+  const [selectedGfsIds, setSelectedGfsIds] = React.useState<string[]>([]);
+  const [extendMethod, setExtendMethod] = React.useState<GfsExtendMethod>("resize");
   const [isNoDowntime, setIsNoDowntime] = React.useState(false);
+  const [candidateDisks, setCandidateDisks] = React.useState<DiskSelectionItem[]>([]);
+  const [gfsDisks, setGfsDisks] = React.useState<GfsDiskMountInfo[]>([]);
+  const [loadStatus, setLoadStatus] = React.useState<LoadStatus>("idle");
+  const [errorMessage, setErrorMessage] = React.useState("");
 
   React.useEffect(() => {
     if (!isOpen) {
-      setSelectedIds([]);
+      setSelectedCandidateIds([]);
+      setSelectedGfsIds([]);
       setExtendMethod("resize");
       setIsNoDowntime(false);
+      setCandidateDisks([]);
+      setGfsDisks([]);
+      setLoadStatus("idle");
+      setErrorMessage("");
+      return undefined;
     }
-  }, [isOpen]);
+
+    if (!action) {
+      return undefined;
+    }
+
+    let isCurrent = true;
+
+    const loadData = async () => {
+      setLoadStatus("loading");
+      setErrorMessage("");
+
+      try {
+        if (action === "add") {
+          const disks = await fetchGfsDiskCandidates();
+
+          if (!isCurrent) return;
+          setCandidateDisks(disks);
+          setGfsDisks([]);
+        } else if (action === "extend") {
+          const [status, candidates] = await Promise.all([
+            fetchGfsDiskStatus(),
+            fetchGfsDiskCandidates(),
+          ]);
+
+          if (!isCurrent) return;
+          setGfsDisks(status.mountDetails);
+          setCandidateDisks(candidates);
+        } else {
+          const status = await fetchGfsDiskStatus();
+
+          if (!isCurrent) return;
+          setGfsDisks(status.mountDetails);
+          setCandidateDisks([]);
+        }
+
+        setLoadStatus("success");
+      } catch (error) {
+        if (!isCurrent) return;
+
+        console.error("gfs disk modal data API error:", error);
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "GFS 디스크 데이터를 조회하지 못했습니다."
+        );
+        setLoadStatus("error");
+      }
+    };
+
+    void loadData();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [action, isOpen]);
 
   if (!action) {
     return null;
@@ -67,8 +159,19 @@ export default function GfsDiskActionModal({
   const isInfo = action === "info";
   const isAdd = action === "add";
   const isExtend = action === "extend";
-  const isExecutable = isInfo || selectedIds.length > 0;
-  const sourceList = isAdd ? AVAILABLE_DISKS : GFS_DISKS;
+  const needsAddLunSelection = isExtend && extendMethod === "add-lun";
+  const isExecutable =
+    loadStatus === "success" &&
+    (
+      isInfo ||
+      (isAdd && selectedCandidateIds.length > 0) ||
+      (action === "delete" && selectedGfsIds.length > 0) ||
+      (
+        isExtend &&
+        selectedGfsIds.length > 0 &&
+        (!needsAddLunSelection || selectedCandidateIds.length > 0)
+      )
+    );
 
   const execute = () => {
     if (isInfo) {
@@ -76,19 +179,66 @@ export default function GfsDiskActionModal({
       return;
     }
 
-    onConfirm(action, selectedIds);
+    const selectedGfsDisks = gfsDisks.filter((disk) => selectedGfsIds.includes(disk.id));
+
+    onConfirm(action, {
+      selectedIds: [...selectedGfsIds, ...selectedCandidateIds],
+      selectedGfsDisks,
+      selectedCandidateIds,
+      extendMethod,
+      isNoDowntime,
+    });
   };
 
-  const renderDiskChecks = () => (
+  const renderLoadState = () => {
+    if (loadStatus === "loading") {
+      return (
+        <div className="ct-wwn-list-modal__loading">
+          <Spinner size="sm" aria-label="GFS 디스크 데이터 조회 중" />
+          <Content component="p">GFS 디스크 데이터를 조회중입니다.</Content>
+        </div>
+      );
+    }
+
+    if (loadStatus === "error") {
+      return (
+        <Alert isInline variant="danger" title="GFS 디스크 데이터 조회 실패">
+          {errorMessage}
+        </Alert>
+      );
+    }
+
+    return null;
+  };
+
+  const renderCandidateChecks = () => (
     <div className="ct-clvm-disk-modal__scroll-list ct-clvm-disk-modal__mono">
-      {sourceList.length > 0 ? sourceList.map((disk) => (
+      {candidateDisks.length > 0 ? candidateDisks.map((disk) => (
         <label className="ct-clvm-disk-modal__check" key={disk.id}>
           <input
             type="checkbox"
-            checked={selectedIds.includes(disk.id)}
-            onChange={() => setSelectedIds((values) => toggleSelection(values, disk.id))}
+            checked={selectedCandidateIds.includes(disk.value)}
+            disabled={disk.disabled}
+            onChange={() => setSelectedCandidateIds((values) => toggleSelection(values, disk.value))}
           />
-          <span>{"label" in disk ? disk.label : `${disk.mount} ${disk.pv} ${disk.vg} ${disk.size}`}</span>
+          <span>{disk.label}</span>
+        </label>
+      )) : (
+        <Content component="p">데이터가 존재하지 않습니다.</Content>
+      )}
+    </div>
+  );
+
+  const renderGfsChecks = () => (
+    <div className="ct-clvm-disk-modal__scroll-list ct-clvm-disk-modal__mono">
+      {gfsDisks.length > 0 ? gfsDisks.map((disk) => (
+        <label className="ct-clvm-disk-modal__check" key={disk.id}>
+          <input
+            type="checkbox"
+            checked={selectedGfsIds.includes(disk.id)}
+            onChange={() => setSelectedGfsIds((values) => singleSelection(values, disk.id))}
+          />
+          <span>{gfsDiskLabel(disk)}</span>
         </label>
       )) : (
         <Content component="p">데이터가 존재하지 않습니다.</Content>
@@ -98,17 +248,56 @@ export default function GfsDiskActionModal({
 
   const renderInfo = () => (
     <div className="ct-action-confirm-modal__body">
-      {GFS_DISKS.map((disk) => (
+      {gfsDisks.length > 0 ? gfsDisks.map((disk) => (
         <div className="ct-gfs-disk-info" key={disk.id}>
-          <div><strong>디스크 마운트 상태</strong> Health OK</div>
-          <div><strong>마운트 경로</strong> {disk.mount}</div>
-          <div><strong>물리 볼륨</strong> {disk.pv}</div>
-          <div><strong>볼륨 그룹</strong> {disk.vg}</div>
-          <div><strong>디스크 크기</strong> {disk.size}</div>
+          <div><strong>디스크 마운트 상태</strong> {disk.status}</div>
+          <div><strong>마운트 경로</strong> {disk.mountPath}</div>
+          <div><strong>물리 볼륨</strong> {disk.physicalVolume}</div>
+          <div><strong>볼륨 그룹</strong> {disk.volumeGroup}</div>
+          <div><strong>디스크 크기</strong> {disk.diskSize}</div>
+          <div><strong>리소스 상태</strong> {disk.resourceStatus.join(" / ")}</div>
         </div>
-      ))}
+      )) : (
+        <Content component="p">데이터가 존재하지 않습니다.</Content>
+      )}
     </div>
   );
+
+  const renderExtendBody = () => (
+    <div className="ct-action-confirm-modal__body">
+      <Content component="p">확장할 GFS 디스크 및 확장 방식을 선택해주세요.</Content>
+      {renderGfsChecks()}
+      <label className="ct-action-confirm-modal__check">
+        <input
+          type="radio"
+          name="gfs-extend-method"
+          checked={extendMethod === "resize"}
+          onChange={() => setExtendMethod("resize")}
+        />
+        <span>기존 디스크 사이즈만 확장</span>
+      </label>
+      <label className="ct-action-confirm-modal__check">
+        <input
+          type="radio"
+          name="gfs-extend-method"
+          checked={extendMethod === "add-lun"}
+          onChange={() => setExtendMethod("add-lun")}
+        />
+        <span>새로운 LUN 디스크 추가</span>
+      </label>
+      {needsAddLunSelection ? renderCandidateChecks() : null}
+      <label className="ct-action-confirm-modal__check">
+        <input
+          type="checkbox"
+          checked={isNoDowntime}
+          onChange={(event) => setIsNoDowntime(event.currentTarget.checked)}
+        />
+        <span>무중단 확장</span>
+      </label>
+    </div>
+  );
+
+  const loadState = renderLoadState();
 
   return (
     <Modal
@@ -120,50 +309,30 @@ export default function GfsDiskActionModal({
     >
       <ModalHeader title={ACTION_TITLE[action]} />
       <ModalBody>
-        {isAdd && (
-          <div className="ct-clvm-disk-modal__warning">
-            <ExclamationTriangleIcon aria-hidden="true" />
-            <span>선택한 항목과 관계없이 한 번에 하나의 디스크만 생성됩니다. 원하는 디스크를 신중하게 선택하세요.</span>
-          </div>
+        {loadState ?? (
+          <>
+            {isAdd && (
+              <>
+                <div className="ct-clvm-disk-modal__warning">
+                  <ExclamationTriangleIcon aria-hidden="true" />
+                  <span>선택한 항목과 관계없이 한 번에 하나의 디스크만 생성됩니다. 원하는 디스크를 신중하게 선택하세요.</span>
+                </div>
+                {renderCandidateChecks()}
+              </>
+            )}
+            {action === "delete" && (
+              <>
+                <div className="ct-clvm-disk-modal__warning">
+                  <ExclamationTriangleIcon aria-hidden="true" />
+                  <span>선택한 디스크의 모든 데이터가 영구적으로 삭제됩니다.</span>
+                </div>
+                {renderGfsChecks()}
+              </>
+            )}
+            {isExtend && renderExtendBody()}
+            {isInfo && renderInfo()}
+          </>
         )}
-        {action === "delete" && (
-          <div className="ct-clvm-disk-modal__warning">
-            <ExclamationTriangleIcon aria-hidden="true" />
-            <span>선택한 디스크의 모든 데이터가 영구적으로 삭제됩니다.</span>
-          </div>
-        )}
-        {isExtend && (
-          <div className="ct-action-confirm-modal__body">
-            <Content component="p">확장할 GFS 디스크 및 확장 방식을 선택해주세요.</Content>
-            <label className="ct-action-confirm-modal__check">
-              <input
-                type="radio"
-                name="gfs-extend-method"
-                checked={extendMethod === "resize"}
-                onChange={() => setExtendMethod("resize")}
-              />
-              <span>기존 디스크 사이즈만 확장</span>
-            </label>
-            <label className="ct-action-confirm-modal__check">
-              <input
-                type="radio"
-                name="gfs-extend-method"
-                checked={extendMethod === "add-lun"}
-                onChange={() => setExtendMethod("add-lun")}
-              />
-              <span>새로운 LUN 디스크 추가</span>
-            </label>
-            <label className="ct-action-confirm-modal__check">
-              <input
-                type="checkbox"
-                checked={isNoDowntime}
-                onChange={(event) => setIsNoDowntime(event.currentTarget.checked)}
-              />
-              <span>무중단 확장</span>
-            </label>
-          </div>
-        )}
-        {isInfo ? renderInfo() : renderDiskChecks()}
       </ModalBody>
       <ModalFooter>
         <Button variant="primary" isDisabled={!isExecutable} onClick={execute}>

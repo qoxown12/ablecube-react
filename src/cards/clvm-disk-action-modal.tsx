@@ -1,56 +1,44 @@
 // 스토리지센터 클러스터 카드의 CLVM 디스크 추가/삭제/정보 모달입니다.
 import React from "react";
 import {
+  Alert,
   Button,
   Content,
   Modal,
   ModalBody,
   ModalFooter,
   ModalHeader,
+  Spinner,
 } from "@patternfly/react-core";
 import { ExclamationTriangleIcon } from "@patternfly/react-icons";
 
+import {
+  fetchClvmDiskList,
+  type ClvmDiskInfo,
+} from "../services/api/clvm-manage";
+import {
+  fetchGfsDiskCandidates,
+  type DiskSelectionItem,
+} from "../services/api/disk";
+
 export type ClvmDiskAction = "add" | "delete" | "info";
+
+export interface ClvmDiskActionSelection {
+  selectedIds: string[];
+  selectedClvmDisks: ClvmDiskInfo[];
+}
 
 interface ClvmDiskActionModalProps {
   action: ClvmDiskAction | null;
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (action: Exclude<ClvmDiskAction, "info">, selectedIds: string[]) => void;
+  onConfirm: (
+    action: Exclude<ClvmDiskAction, "info">,
+    selection: ClvmDiskActionSelection
+  ) => void;
 }
 
-const ADDABLE_DISKS = [
-  {
-    id: "mpathb",
-    label: "/dev/mapper/mpathb running (mpath) 500G DELL 3600d0230000000000e13955cc3757801",
-  },
-  {
-    id: "mpathc",
-    label: "/dev/mapper/mpathc running (mpath) 500G DELL 3600d0230000000000e13955cc3757802",
-  },
-  {
-    id: "sdd",
-    label: "/dev/sdd running (disk) 1T SSD 0x5002538e00000001 ( Partition exists count : 1 )",
-    disabled: true,
-  },
-];
-
-const CLVM_DISKS = [
-  {
-    id: "vg_clvm01",
-    vgName: "vg_clvm01",
-    pvName: "/dev/mapper/mpathb",
-    pvSize: "500G",
-    wwn: "3600d0230000000000e13955cc3757801",
-  },
-  {
-    id: "vg_clvm02",
-    vgName: "vg_clvm02",
-    pvName: "/dev/mapper/mpathc",
-    pvSize: "500G",
-    wwn: "3600d0230000000000e13955cc3757802",
-  },
-];
+type LoadStatus = "idle" | "loading" | "success" | "error";
 
 const ACTION_TITLE: Record<ClvmDiskAction, string> = {
   add: "CLVM 디스크 추가",
@@ -72,13 +60,67 @@ export default function ClvmDiskActionModal({
 }: ClvmDiskActionModalProps) {
   const [selectedAddDisks, setSelectedAddDisks] = React.useState<string[]>([]);
   const [selectedDeleteDisks, setSelectedDeleteDisks] = React.useState<string[]>([]);
+  const [addableDisks, setAddableDisks] = React.useState<DiskSelectionItem[]>([]);
+  const [clvmDisks, setClvmDisks] = React.useState<ClvmDiskInfo[]>([]);
+  const [loadStatus, setLoadStatus] = React.useState<LoadStatus>("idle");
+  const [errorMessage, setErrorMessage] = React.useState("");
 
   React.useEffect(() => {
     if (!isOpen) {
       setSelectedAddDisks([]);
       setSelectedDeleteDisks([]);
+      setAddableDisks([]);
+      setClvmDisks([]);
+      setLoadStatus("idle");
+      setErrorMessage("");
+      return undefined;
     }
-  }, [isOpen]);
+
+    if (!action) {
+      return undefined;
+    }
+
+    let isCurrent = true;
+
+    const loadData = async () => {
+      setLoadStatus("loading");
+      setErrorMessage("");
+
+      try {
+        if (action === "add") {
+          const disks = await fetchGfsDiskCandidates();
+
+          if (!isCurrent) return;
+          setAddableDisks(disks);
+          setClvmDisks([]);
+        } else {
+          const disks = await fetchClvmDiskList();
+
+          if (!isCurrent) return;
+          setClvmDisks(disks);
+          setAddableDisks([]);
+        }
+
+        setLoadStatus("success");
+      } catch (error) {
+        if (!isCurrent) return;
+
+        console.error("clvm disk modal data API error:", error);
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "CLVM 디스크 데이터를 조회하지 못했습니다."
+        );
+        setLoadStatus("error");
+      }
+    };
+
+    void loadData();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [action, isOpen]);
 
   if (!action) {
     return null;
@@ -87,7 +129,9 @@ export default function ClvmDiskActionModal({
   const isAdd = action === "add";
   const isDelete = action === "delete";
   const selectedIds = isAdd ? selectedAddDisks : selectedDeleteDisks;
-  const isExecutable = action === "info" || selectedIds.length > 0;
+  const isExecutable =
+    loadStatus === "success" &&
+    (action === "info" || selectedIds.length > 0);
   const modalSizeClass = isAdd ? "ct-clvm-disk-modal--large" : "ct-clvm-disk-modal--medium";
 
   const execute = () => {
@@ -96,7 +140,31 @@ export default function ClvmDiskActionModal({
       return;
     }
 
-    onConfirm(action, selectedIds);
+    onConfirm(action, {
+      selectedIds,
+      selectedClvmDisks: clvmDisks.filter((disk) => selectedIds.includes(disk.id)),
+    });
+  };
+
+  const renderLoadState = () => {
+    if (loadStatus === "loading") {
+      return (
+        <div className="ct-wwn-list-modal__loading">
+          <Spinner size="sm" aria-label="CLVM 디스크 데이터 조회 중" />
+          <Content component="p">CLVM 디스크 데이터를 조회중입니다.</Content>
+        </div>
+      );
+    }
+
+    if (loadStatus === "error") {
+      return (
+        <Alert isInline variant="danger" title="CLVM 디스크 데이터 조회 실패">
+          {errorMessage}
+        </Alert>
+      );
+    }
+
+    return null;
   };
 
   const renderAddBody = () => (
@@ -110,13 +178,13 @@ export default function ClvmDiskActionModal({
           CLVM 디스크 구성 대상 장치 <span aria-hidden="true">*</span>
         </div>
         <div className="ct-clvm-disk-modal__scroll-list">
-          {ADDABLE_DISKS.length > 0 ? ADDABLE_DISKS.map((disk) => (
+          {addableDisks.length > 0 ? addableDisks.map((disk) => (
             <label className="ct-clvm-disk-modal__check" key={disk.id}>
               <input
                 type="checkbox"
-                checked={selectedAddDisks.includes(disk.id)}
+                checked={selectedAddDisks.includes(disk.value)}
                 disabled={disk.disabled}
-                onChange={() => setSelectedAddDisks((values) => toggleSelection(values, disk.id))}
+                onChange={() => setSelectedAddDisks((values) => toggleSelection(values, disk.value))}
               />
               <span>{disk.label}</span>
             </label>
@@ -130,14 +198,14 @@ export default function ClvmDiskActionModal({
 
   const renderDeleteBody = () => (
     <div className="ct-clvm-disk-modal__scroll-list ct-clvm-disk-modal__mono">
-      {CLVM_DISKS.length > 0 ? CLVM_DISKS.map((disk, index) => (
+      {clvmDisks.length > 0 ? clvmDisks.map((disk) => (
         <label className="ct-clvm-disk-modal__check" key={disk.id}>
           <input
             type="checkbox"
             checked={selectedDeleteDisks.includes(disk.id)}
             onChange={() => setSelectedDeleteDisks((values) => toggleSelection(values, disk.id))}
           />
-          <span>{index + 1}. {disk.vgName} {disk.pvName} {disk.pvSize} {disk.wwn}</span>
+          <span>{disk.label}</span>
         </label>
       )) : (
         <Content component="p">데이터가 존재하지 않습니다.</Content>
@@ -147,15 +215,15 @@ export default function ClvmDiskActionModal({
 
   const renderInfoBody = () => (
     <div className="ct-clvm-disk-modal__scroll-list ct-clvm-disk-modal__mono">
-      {CLVM_DISKS.length > 0 ? CLVM_DISKS.map((disk, index) => (
-        <div key={disk.id}>
-          {index + 1}. {disk.vgName} {disk.pvName} {disk.pvSize} {disk.wwn}
-        </div>
+      {clvmDisks.length > 0 ? clvmDisks.map((disk) => (
+        <div key={disk.id}>{disk.label}</div>
       )) : (
         <Content component="p">데이터가 존재하지 않습니다.</Content>
       )}
     </div>
   );
+
+  const loadState = renderLoadState();
 
   return (
     <Modal
@@ -167,9 +235,13 @@ export default function ClvmDiskActionModal({
     >
       <ModalHeader title={ACTION_TITLE[action]} />
       <ModalBody>
-        {isAdd && renderAddBody()}
-        {isDelete && renderDeleteBody()}
-        {action === "info" && renderInfoBody()}
+        {loadState ?? (
+          <>
+            {isAdd && renderAddBody()}
+            {isDelete && renderDeleteBody()}
+            {action === "info" && renderInfoBody()}
+          </>
+        )}
       </ModalBody>
       <ModalFooter>
         <Button variant="primary" isDisabled={!isExecutable} onClick={execute}>

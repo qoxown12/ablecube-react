@@ -16,9 +16,26 @@ export interface CloudVmStatusData {
   manageNicDns: string;
 }
 
+export interface CloudVmSnapshotOption {
+  value: string;
+  label: string;
+}
+
 interface CcvmStatusResponse {
   code?: number;
   data?: Record<string, unknown>;
+  message?: string;
+}
+
+interface CcvmSnapResponse {
+  code?: number | string;
+  val?: unknown;
+  message?: string;
+}
+
+interface GenericCloudVmActionResponse {
+  code?: number | string;
+  val?: unknown;
   message?: string;
 }
 
@@ -202,4 +219,174 @@ export async function fetchCloudVmStatus(): Promise<CloudVmStatusData> {
   }
 
   return mapCcvmStatus(parsed.data);
+}
+
+function mapSnapshotOption(value: unknown): CloudVmSnapshotOption | null {
+  if (typeof value === "string" && value.trim()) {
+    return {
+      value: value.trim(),
+      label: value.trim(),
+    };
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const data = value as Record<string, unknown>;
+  const name =
+    readFirstString(data, ["name", "snap_name", "snapshot", "snapshot_name"]) ??
+    readString(data, "id");
+
+  return name
+    ? {
+      value: name,
+      label: name,
+    }
+    : null;
+}
+
+export async function fetchCloudVmSnapshotOptions(): Promise<CloudVmSnapshotOption[]> {
+  const parsed = await requestCubeApi<CcvmSnapResponse>(
+    "/api/v1/cube/ccvm/snap",
+    {
+      method: "POST",
+      body: {
+        action: "list",
+      },
+    }
+  );
+
+  if (parsed.code !== undefined && String(parsed.code) !== "200") {
+    throw new Error(
+      typeof parsed.message === "string" && parsed.message.trim()
+        ? parsed.message
+        : "클라우드센터VM 스냅샷 목록 조회에 실패했습니다."
+    );
+  }
+
+  if (!Array.isArray(parsed.val)) {
+    return [];
+  }
+
+  return parsed.val
+    .map(mapSnapshotOption)
+    .filter((item): item is CloudVmSnapshotOption => Boolean(item));
+}
+
+function getActionResponseMessage(
+  response: GenericCloudVmActionResponse,
+  fallbackMessage: string
+): string {
+  if (typeof response.message === "string" && response.message.trim()) {
+    return response.message.trim();
+  }
+
+  if (typeof response.val === "string" && response.val.trim()) {
+    return response.val.trim();
+  }
+
+  return fallbackMessage;
+}
+
+function assertActionSuccess(response: GenericCloudVmActionResponse, fallbackMessage: string) {
+  if (String(response.code ?? "") !== "200") {
+    throw new Error(getActionResponseMessage(response, fallbackMessage));
+  }
+}
+
+export async function createCloudVmSnapshotBackup(): Promise<void> {
+  const parsed = await requestCubeApi<GenericCloudVmActionResponse>(
+    "/api/v1/cube/ccvm/snap",
+    {
+      method: "POST",
+      maxTimeSeconds: 1900,
+      body: {
+        action: "backup",
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "클라우드센터VM 스냅샷 백업에 실패했습니다.");
+}
+
+export async function rollbackCloudVmSnapshot(snapName: string): Promise<void> {
+  const parsed = await requestCubeApi<GenericCloudVmActionResponse>(
+    "/api/v1/cube/ccvm/snap",
+    {
+      method: "POST",
+      maxTimeSeconds: 1900,
+      body: {
+        action: "rollback",
+        snap_name: snapName,
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "클라우드센터VM 스냅샷 복구에 실패했습니다.");
+}
+
+export async function controlCloudVmService(
+  serviceName: "mold.service" | "mysqld",
+  action: string
+): Promise<void> {
+  const parsed = await requestCubeApi<GenericCloudVmActionResponse>(
+    "/api/v1/cube/ccvm/service/control",
+    {
+      method: "POST",
+      maxTimeSeconds: 120,
+      body: {
+        action,
+        service_name: serviceName,
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "클라우드센터VM 서비스 제어에 실패했습니다.");
+}
+
+export async function updateCloudVmResource(cpu: string, memory: string): Promise<void> {
+  const parsed = await requestCubeApi<GenericCloudVmActionResponse>(
+    "/api/v1/cube/ccvm/edit",
+    {
+      method: "POST",
+      maxTimeSeconds: 120,
+      body: {
+        cpu,
+        memory,
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "클라우드센터VM 자원변경에 실패했습니다.");
+}
+
+export async function resizeCloudVmSecondaryDisk(addSizeGiB: number): Promise<void> {
+  const parsed = await requestCubeApi<GenericCloudVmActionResponse>(
+    "/api/v1/cube/ccvm/secondary/resize",
+    {
+      method: "POST",
+      maxTimeSeconds: 900,
+      body: {
+        add_size: addSizeGiB,
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "Mold 세컨더리 용량 추가에 실패했습니다.");
+}
+
+export async function runCloudVmInstantDbBackup(): Promise<void> {
+  const parsed = await requestCubeApi<GenericCloudVmActionResponse>(
+    "/api/v1/cube/db/dump",
+    {
+      method: "POST",
+      maxTimeSeconds: 300,
+      body: {
+        action: "instantBackup",
+      },
+    }
+  );
+
+  assertActionSuccess(parsed, "DB 즉시 백업에 실패했습니다.");
 }

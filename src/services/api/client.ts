@@ -5,6 +5,7 @@ import { getCubeApiConfig } from "./config";
 interface CubeApiRequestOptions {
   method?: "GET" | "POST";
   body?: unknown;
+  maxTimeSeconds?: number;
 }
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -23,7 +24,7 @@ export async function requestCubeApi<T>(
     "--connect-timeout",
     "5",
     "--max-time",
-    "15",
+    String(options.maxTimeSeconds ?? 15),
     "-X",
     method,
     joinUrl(baseUrl, path),

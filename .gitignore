@@ -17,6 +17,7 @@
 /*.whl
 /bots
 /cockpit-*.tar.xz
+/cube.conf
 /dist/
 /img/
 /node_modules/

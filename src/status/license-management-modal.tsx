@@ -17,27 +17,21 @@ import {
   ExclamationTriangleIcon,
   InfoCircleIcon,
 } from "@patternfly/react-icons";
-import cockpit from "cockpit";
+
+import {
+  fetchLicenseStatus,
+  registerLicenseContent,
+} from "../services/api/license";
+import type { LicenseStatusResult } from "../services/api/license";
 
 interface LicenseManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type LicenseStatusKind = "loading" | "active" | "inactive" | "missing" | "error";
 type RegisterStatusKind = "idle" | "registering" | "success" | "error";
 
-interface LicenseStatus {
-  kind: LicenseStatusKind;
-  issued?: string;
-  expired?: string;
-  message?: string;
-}
-
-const LICENSE_SCRIPT = "/usr/share/cockpit/ablestack/python/license/register_license.py";
-
-const isSuccessCode = (code: unknown) => String(code) === "200";
-const isMissingCode = (code: unknown) => String(code) === "404";
+type LicenseStatus = { kind: "loading" } | LicenseStatusResult;
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
@@ -66,36 +60,6 @@ function readFileAsBase64(file: File) {
   });
 }
 
-function parseLicenseStatus(stdout: string): LicenseStatus {
-  const result = JSON.parse(stdout);
-  const status = result?.val?.status;
-
-  if (isSuccessCode(result?.code) && status === "active") {
-    return {
-      kind: "active",
-      issued: result.val.issued,
-      expired: result.val.expired,
-    };
-  }
-
-  if (isSuccessCode(result?.code) && status === "inactive") {
-    return {
-      kind: "inactive",
-      issued: result.val.issued,
-      expired: result.val.expired,
-    };
-  }
-
-  if (isMissingCode(result?.code)) {
-    return { kind: "missing" };
-  }
-
-  return {
-    kind: "error",
-    message: typeof result?.val === "string" ? result.val : "라이센스 상태 확인 중 오류가 발생했습니다.",
-  };
-}
-
 function statusErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -122,10 +86,9 @@ export default function LicenseManagementModal({
   const loadLicenseStatus = React.useCallback(() => {
     setLicenseStatus({ kind: "loading" });
 
-    cockpit
-      .spawn(["python3", LICENSE_SCRIPT, "--status"], { superuser: true })
-      .then((stdout) => {
-        setLicenseStatus(parseLicenseStatus(stdout));
+    fetchLicenseStatus()
+      .then((status) => {
+        setLicenseStatus(status);
       })
       .catch((error) => {
         setLicenseStatus({
@@ -163,29 +126,12 @@ export default function LicenseManagementModal({
 
     try {
       const base64Content = await readFileAsBase64(licenseFile);
-      const stdout = await cockpit.spawn(
-        [
-          "python3",
-          LICENSE_SCRIPT,
-          "--license-content",
-          base64Content,
-          "--original-filename",
-          licenseFile.name,
-        ],
-        { superuser: true }
-      );
-      const result = JSON.parse(stdout);
+      const message = await registerLicenseContent(base64Content, licenseFile.name);
 
-      if (isSuccessCode(result?.code)) {
-        setRegisterStatus("success");
-        setRegisterMessage("라이센스가 성공적으로 등록되었습니다.");
-        clearSelectedFile();
-        loadLicenseStatus();
-        return;
-      }
-
-      setRegisterStatus("error");
-      setRegisterMessage(`라이센스 등록 실패: ${result?.val ?? "알 수 없는 오류"}`);
+      setRegisterStatus("success");
+      setRegisterMessage(message || "라이센스가 성공적으로 등록되었습니다.");
+      clearSelectedFile();
+      loadLicenseStatus();
     } catch (error) {
       setRegisterStatus("error");
       setRegisterMessage(`라이센스 등록 중 오류가 발생했습니다: ${statusErrorMessage(error)}`);
@@ -208,8 +154,11 @@ export default function LicenseManagementModal({
           <CheckCircleIcon className="ct-license-management-modal__icon--success" aria-hidden="true" />
           <div>
             <Content component="p">라이센스가 등록되어 있습니다.</Content>
-            <Content component="p"><strong>시작일:</strong> {licenseStatus.issued || "-"}</Content>
-            <Content component="p"><strong>만료일:</strong> {licenseStatus.expired || "-"}</Content>
+            <Content component="p"><strong>시작일:</strong> {licenseStatus.issued}</Content>
+            <Content component="p"><strong>만료일:</strong> {licenseStatus.expired}</Content>
+            {licenseStatus.oem && (
+              <Content component="p"><strong>라이센스 종류:</strong> {licenseStatus.oem}</Content>
+            )}
             <hr />
             <Content component="p" className="ct-license-management-modal__muted">
               새로운 라이센스를 등록하면 기존 라이센스가 교체됩니다.
@@ -227,8 +176,11 @@ export default function LicenseManagementModal({
             <Content component="p" className="ct-license-management-modal__danger-text">
               등록된 라이선스의 유효기간이 만료되었습니다. 새로운 라이센스를 등록해 주세요.
             </Content>
-            <Content component="p"><strong>시작일:</strong> {licenseStatus.issued || "-"}</Content>
-            <Content component="p"><strong>만료일:</strong> {licenseStatus.expired || "-"}</Content>
+            <Content component="p"><strong>시작일:</strong> {licenseStatus.issued}</Content>
+            <Content component="p"><strong>만료일:</strong> {licenseStatus.expired}</Content>
+            {licenseStatus.oem && (
+              <Content component="p"><strong>라이센스 종류:</strong> {licenseStatus.oem}</Content>
+            )}
             <hr />
             <Content component="p" className="ct-license-management-modal__muted">
               새로운 라이센스를 등록하면 기존 라이센스가 교체됩니다.
@@ -244,7 +196,9 @@ export default function LicenseManagementModal({
           <ExclamationCircleIcon className="ct-license-management-modal__icon--warning" aria-hidden="true" />
           <div>
             <Content component="p">등록된 라이센스가 없습니다.</Content>
-            <Content component="p">라이센스 파일을 선택하여 등록해주세요.</Content>
+            <Content component="p">
+              {licenseStatus.message || "라이센스 파일을 선택하여 등록해주세요."}
+            </Content>
           </div>
         </div>
       );

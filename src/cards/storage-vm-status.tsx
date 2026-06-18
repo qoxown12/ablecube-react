@@ -38,10 +38,12 @@ import ConfirmActionModal from "../components/common/ConfirmActionModal";
 import VmResourceUpdateModal from "../components/common/VmResourceUpdateModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
+  deleteStorageVm,
   fetchStorageVmStatus,
   startStorageVm,
   STORAGE_VM_STATUS_FALLBACK,
   stopStorageVm,
+  updateStorageVmResource,
 } from "../services/api/storage-vm-status";
 import "./status-card.scss";
 
@@ -64,7 +66,7 @@ const VM_STATUS_META = {
 };
 
 type StorageVmAction = "start" | "stop" | "delete" | "connect";
-type StorageVmLifecycleAction = Extract<StorageVmAction, "start" | "stop">;
+type StorageVmLifecycleAction = Extract<StorageVmAction, "start" | "stop" | "delete">;
 
 const STORAGE_VM_ACTIONS: Record<StorageVmAction, { title: string; message: string; confirmLabel?: string }> = {
   start: {
@@ -103,10 +105,15 @@ StorageVmLifecycleAction,
     success: "스토리지센터 가상머신 정지가 완료되었습니다.",
     error: "스토리지센터 가상머신 정지 요청에 실패했습니다.",
   },
+  delete: {
+    running: "스토리지센터 가상머신 삭제를 진행중입니다.",
+    success: "스토리지센터 가상머신 삭제가 완료되었습니다.",
+    error: "스토리지센터 가상머신 삭제 요청에 실패했습니다.",
+  },
 };
 
 function isStorageVmLifecycleAction(action: StorageVmAction): action is StorageVmLifecycleAction {
-  return action === "start" || action === "stop";
+  return action === "start" || action === "stop" || action === "delete";
 }
 
 export default function StorageVmStatus() {
@@ -172,9 +179,12 @@ export default function StorageVmStatus() {
   const confirmStorageVmAction = async () => {
     if (!confirmAction) return;
 
-    if (!isStorageVmLifecycleAction(confirmAction)) {
-      // TODO: 백엔드 API 전환 후 delete 또는 create_address.py 호출로 연결합니다.
-      console.log("storage vm action", confirmAction);
+    if (confirmAction === "connect") {
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        message: "스토리지센터VM 연결 주소 조회는 스토리지센터 대시보드 연결 API 기준으로 후속 정리 대상입니다.",
+      });
       setConfirmAction(null);
       return;
     }
@@ -192,8 +202,10 @@ export default function StorageVmStatus() {
     try {
       if (action === "start") {
         await startStorageVm();
-      } else {
+      } else if (action === "stop") {
         await stopStorageVm();
+      } else {
+        await deleteStorageVm();
       }
 
       setActionProgress({
@@ -226,10 +238,31 @@ export default function StorageVmStatus() {
     setIsResourceUpdateModalOpen(false);
   };
 
-  const confirmResourceUpdate = (cpu: string, memory: string) => {
-    // TODO: 백엔드 API 전환 후 storage-vm-resource-update.py에 해당하는 자원변경 API로 연결합니다.
-    console.log("storage vm resource update", cpu, memory);
+  const confirmResourceUpdate = async (cpu: string, memory: string) => {
     setIsResourceUpdateModalOpen(false);
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      message: "스토리지센터 가상머신 자원변경을 진행중입니다.",
+    });
+
+    try {
+      await updateStorageVmResource(cpu, memory);
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        message: "스토리지센터 가상머신 자원변경이 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("storage vm resource update API error:", error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        message: error instanceof Error
+          ? error.message
+          : "스토리지센터 가상머신 자원변경 요청에 실패했습니다.",
+      });
+    }
   };
 
   return (

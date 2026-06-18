@@ -1,12 +1,14 @@
 // 선택값이 필요한 카드 액션 모달을 공통으로 제공합니다.
 import React from "react";
 import {
+  Alert,
   Button,
   Content,
   Modal,
   ModalBody,
   ModalFooter,
   ModalHeader,
+  Spinner,
 } from "@patternfly/react-core";
 import { ExclamationTriangleIcon } from "@patternfly/react-icons";
 
@@ -26,6 +28,9 @@ interface SelectActionModalProps {
   checkLabel?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  isLoading?: boolean;
+  errorMessage?: string;
+  emptyMessage?: string;
   onClose: () => void;
   onConfirm: (value: string) => void;
 }
@@ -40,6 +45,9 @@ export default function SelectActionModal({
   checkLabel,
   confirmLabel = "실행",
   cancelLabel = "취소",
+  isLoading = false,
+  errorMessage = "",
+  emptyMessage = "선택 가능한 항목이 없습니다.",
   onClose,
   onConfirm,
 }: SelectActionModalProps) {
@@ -53,7 +61,11 @@ export default function SelectActionModal({
     }
   }, [isOpen]);
 
-  const isExecutable = Boolean(selectedValue) && (!checkLabel || isChecked);
+  const isExecutable =
+    !isLoading &&
+    !errorMessage &&
+    Boolean(selectedValue) &&
+    (!checkLabel || isChecked);
 
   return (
     <Modal
@@ -73,20 +85,33 @@ export default function SelectActionModal({
               <span>{warning}</span>
             </div>
           )}
-          <label className="ct-action-confirm-modal__field">
-            <span>{selectLabel}</span>
-            <select
-              value={selectedValue}
-              onChange={(event) => setSelectedValue(event.currentTarget.value)}
-            >
-              <option value="">선택하십시오</option>
-              {options.map((option) => (
-                <option key={option.value} value={option.value} disabled={option.disabled}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {isLoading ? (
+            <div className="ct-wwn-list-modal__loading">
+              <Spinner size="sm" aria-label={`${title} 조회 중`} />
+              <Content component="p">선택 목록을 조회중입니다.</Content>
+            </div>
+          ) : errorMessage ? (
+            <Alert isInline variant="danger" title="선택 목록 조회 실패">
+              {errorMessage}
+            </Alert>
+          ) : options.length === 0 ? (
+            <Content component="p">{emptyMessage}</Content>
+          ) : (
+            <label className="ct-action-confirm-modal__field">
+              <span>{selectLabel}</span>
+              <select
+                value={selectedValue}
+                onChange={(event) => setSelectedValue(event.currentTarget.value)}
+              >
+                <option value="">선택하십시오</option>
+                {options.map((option) => (
+                  <option key={option.value} value={option.value} disabled={option.disabled}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {checkLabel && (
             <label className="ct-action-confirm-modal__check">
               <input

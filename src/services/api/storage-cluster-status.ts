@@ -1,4 +1,5 @@
 import { requestCubeApi } from "./client";
+import { fetchStorageCenterUrl } from "./url";
 
 export type StorageClusterMaintenanceAction = "set" | "unset";
 
@@ -82,15 +83,6 @@ interface GlueConfigUpdateResponse {
   message?: string;
   error?: string;
   retname?: string;
-}
-
-interface StorageCenterUrlResponse {
-  code?: number | string;
-  val?: {
-    storageCenter?: string;
-  };
-  message?: string;
-  error?: string;
 }
 
 const GLUE_CLUSTER_MAINTENANCE_ACTION = {
@@ -386,35 +378,4 @@ export async function updateGlueConfigAllHosts(): Promise<GlueConfigUpdateRespon
   return parsed;
 }
 
-export async function fetchStorageCenterUrl(): Promise<string> {
-  const parsed = await requestCubeApi<StorageCenterUrlResponse>(
-    "/api/v1/cube/url?option=storageCenter"
-  );
-
-  if (parsed.code !== undefined && String(parsed.code) !== "200") {
-    throw new Error(getApiErrorMessage(
-      parsed,
-      "스토리지센터 연결 주소 조회에 실패했습니다."
-    ));
-  }
-
-  const storageCenterUrl = normalizeValue(parsed.val?.storageCenter);
-
-  if (!storageCenterUrl) {
-    throw new Error("스토리지센터 연결 주소가 응답에 없습니다.");
-  }
-
-  let parsedUrl: URL;
-
-  try {
-    parsedUrl = new URL(storageCenterUrl);
-  } catch {
-    throw new Error("스토리지센터 연결 주소 형식이 올바르지 않습니다.");
-  }
-
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    throw new Error("스토리지센터 연결 주소 형식이 올바르지 않습니다.");
-  }
-
-  return parsedUrl.href;
-}
+export { fetchStorageCenterUrl };

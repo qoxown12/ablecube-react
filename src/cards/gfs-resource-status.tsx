@@ -31,9 +31,12 @@ import {
   StatusLoadingMessage,
 } from "./status-loading";
 import WwnListModal from "./wwn-list-modal";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import CheckedConfirmActionModal from "../components/common/CheckedConfirmActionModal";
 import SelectActionModal from "../components/common/SelectActionModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
+import { scanGfsStorageDevices } from "../services/api/gfs-manage";
 import {
   fetchGfsResourceStatus,
   GFS_RESOURCE_STATUS_FALLBACK,
@@ -64,6 +67,17 @@ export default function GfsResourceStatus() {
   const [isExternalStorageRescanModalOpen, setIsExternalStorageRescanModalOpen] = React.useState(false);
   const [isWwnListModalOpen, setIsWwnListModalOpen] = React.useState(false);
   const [isHostRemoveModalOpen, setIsHostRemoveModalOpen] = React.useState(false);
+  const [actionProgress, setActionProgress] = React.useState<{
+    isOpen: boolean;
+    phase: ActionProgressPhase;
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    phase: "running",
+    title: "",
+    message: "",
+  });
 
   const handleStatusError = React.useCallback((error: unknown) => {
     console.error("gfs resource status API error:", error);
@@ -86,8 +100,13 @@ export default function GfsResourceStatus() {
   };
 
   const confirmExternalStorageSync = () => {
-    // TODO: 백엔드 API 전환 후 multipath sync API로 연결합니다.
     setIsExternalStorageSyncModalOpen(false);
+    setActionProgress({
+      isOpen: true,
+      phase: "error",
+      title: "외부 스토리지 동기화",
+      message: "multipath 설정 동기화까지 수행하는 API가 아직 확인되지 않았습니다. 현재 연결 가능한 API는 외부 스토리지 재검색입니다.",
+    });
   };
 
   const openExternalStorageRescanModal = () => {
@@ -99,9 +118,34 @@ export default function GfsResourceStatus() {
     setIsExternalStorageRescanModalOpen(false);
   };
 
-  const confirmExternalStorageRescan = () => {
-    // TODO: 백엔드 API 전환 후 storage rescan API로 연결합니다.
+  const confirmExternalStorageRescan = async () => {
     setIsExternalStorageRescanModalOpen(false);
+    setActionProgress({
+      isOpen: true,
+      phase: "running",
+      title: "외부 스토리지 재검색",
+      message: "외부 스토리지 재검색을 진행중입니다.",
+    });
+
+    try {
+      await scanGfsStorageDevices();
+      setActionProgress({
+        isOpen: true,
+        phase: "success",
+        title: "외부 스토리지 재검색",
+        message: "외부 스토리지 재검색이 완료되었습니다.",
+      });
+    } catch (error) {
+      console.error("gfs external storage rescan API error:", error);
+      setActionProgress({
+        isOpen: true,
+        phase: "error",
+        title: "외부 스토리지 재검색",
+        message: error instanceof Error
+          ? error.message
+          : "외부 스토리지 재검색에 실패했습니다.",
+      });
+    }
   };
 
   const openWwnListModal = () => {
@@ -123,9 +167,17 @@ export default function GfsResourceStatus() {
   };
 
   const confirmHostRemove = (hostname: string) => {
-    // TODO: 백엔드 API 전환 후 GFS host remove API로 연결합니다.
-    console.log("gfs host remove", hostname);
     setIsHostRemoveModalOpen(false);
+    setActionProgress({
+      isOpen: true,
+      phase: "error",
+      title: "호스트 제거",
+      message: `${hostname} 호스트 제거는 실제 cluster.json 호스트 목록과 remove API payload 매핑을 확인한 뒤 연결해야 합니다.`,
+    });
+  };
+
+  const closeActionProgressModal = () => {
+    setActionProgress((prev) => ({ ...prev, isOpen: false }));
   };
 
   const renderStatusDetail = (statusKey: string, detail?: string, detailLines?: string[]) => {
@@ -292,6 +344,14 @@ export default function GfsResourceStatus() {
         checkLabel="호스트명 확인"
         onClose={closeHostRemoveModal}
         onConfirm={confirmHostRemove}
+      />
+
+      <ActionProgressModal
+        isOpen={actionProgress.isOpen}
+        title={actionProgress.title}
+        phase={actionProgress.phase}
+        message={actionProgress.message}
+        onClose={closeActionProgressModal}
       />
     </Card>
   );

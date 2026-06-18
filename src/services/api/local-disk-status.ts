@@ -105,3 +105,42 @@ export async function fetchLocalDiskStatus(): Promise<LocalDiskStatusData> {
     size: readString(parsed.val, "size"),
   });
 }
+
+function assertLocalManageSuccess(response: LocalManageResponse, fallbackMessage: string) {
+  if (!isSuccessCode(response.code)) {
+    throw new Error(
+      typeof response.message === "string" && response.message.trim()
+        ? response.message
+        : fallbackMessage
+    );
+  }
+}
+
+export async function createLocalDisk(disks: string[]): Promise<void> {
+  const parsed = await requestCubeApi<LocalManageResponse>(
+    "/api/v1/cube/local/manage",
+    {
+      method: "POST",
+      body: {
+        action: "create-local-disk",
+        disks,
+      },
+    }
+  );
+
+  assertLocalManageSuccess(parsed, "로컬 디스크 구성 요청에 실패했습니다.");
+}
+
+export async function resetLocalDisk(): Promise<void> {
+  const parsed = await requestCubeApi<LocalManageResponse>(
+    "/api/v1/cube/local/manage",
+    {
+      method: "POST",
+      body: {
+        action: "reset",
+      },
+    }
+  );
+
+  assertLocalManageSuccess(parsed, "로컬 디스크 초기화 요청에 실패했습니다.");
+}

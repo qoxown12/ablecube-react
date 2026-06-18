@@ -32,7 +32,7 @@ interface ScvmActionResponse {
   error?: string;
 }
 
-type ScvmLifecycleAction = "start" | "stop";
+type ScvmLifecycleAction = "start" | "stop" | "delete" | "resource";
 
 interface CidrAddress {
   ip: string | null;
@@ -205,14 +205,17 @@ export async function fetchStorageVmStatus(): Promise<StorageVmStatusData> {
 }
 
 async function updateStorageVmLifecycle(
-  action: ScvmLifecycleAction
+  action: ScvmLifecycleAction,
+  body: Record<string, unknown> = {}
 ): Promise<ScvmActionResponse> {
   const parsed = await requestCubeApi<ScvmActionResponse>(
     "/api/v1/cube/scvm/lifecycle",
     {
       method: "POST",
+      maxTimeSeconds: 300,
       body: {
         action,
+        ...body,
       },
     }
   );
@@ -234,4 +237,18 @@ export async function startStorageVm(): Promise<ScvmActionResponse> {
 
 export async function stopStorageVm(): Promise<ScvmActionResponse> {
   return updateStorageVmLifecycle("stop");
+}
+
+export async function deleteStorageVm(): Promise<ScvmActionResponse> {
+  return updateStorageVmLifecycle("delete");
+}
+
+export async function updateStorageVmResource(
+  cpu: string,
+  memory: string
+): Promise<ScvmActionResponse> {
+  return updateStorageVmLifecycle("resource", {
+    cpu: Number(cpu),
+    memory: Number(memory),
+  });
 }
