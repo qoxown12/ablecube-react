@@ -5,31 +5,15 @@ import {
   CardTitle,
   CardBody,
   CardFooter,
-  Label,
-  Flex,
-  FlexItem,
-  DescriptionList,
-  DescriptionListGroup,
-  DescriptionListTerm,
-  DescriptionListDescription,
   Dropdown,
+  DropdownGroup,
   DropdownList,
   DropdownItem,
   MenuToggle,
 } from "@patternfly/react-core";
 import {
-  VirtualMachineIcon,
-  InfoCircleIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  ExclamationCircleIcon,
-  EllipsisVIcon,
-} from "@patternfly/react-icons";
-
-import {
   STATUS_LOADING_LABEL,
   STATUS_UNKNOWN_LABEL,
-  StatusLoadingIcon,
   StatusLoadingMessage,
 } from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
@@ -41,23 +25,32 @@ import {
   CLOUD_VM_STATUS_FALLBACK,
   fetchCloudVmStatus,
 } from "../services/api/cloud-vm-status";
+import {
+  CardDivider,
+  compactDiskUsage,
+  DotStatus,
+  InfoGrid,
+  InfoItem,
+  NicGroup,
+  nicName,
+  StatusCardHeading,
+  stripStatusLabel,
+  UsageProgress,
+} from "./status-card-layout";
 import "./status-card.scss";
 
 const VM_STATUS_META = {
   running: {
     label: "Running",
     color: "green",
-    icon: <CheckCircleIcon />,
   },
   shutOff: {
     label: "Stopped",
     color: "orange",
-    icon: <ExclamationTriangleIcon />,
   },
   HEALTH_ERR: {
     label: "Health Err",
     color: "red",
-    icon: <ExclamationCircleIcon />,
   },
 };
 
@@ -142,18 +135,16 @@ export default function CloudVmStatus() {
     ? {
       label: STATUS_LOADING_LABEL,
       color: "orange",
-      icon: <StatusLoadingIcon />,
     }
     : (VM_STATUS_META as any)[data.vmStatus] ?? {
       label: STATUS_UNKNOWN_LABEL,
       color: "orange",
-      icon: <InfoCircleIcon />,
     };
 
   const isVmError = data.vmStatus === "HEALTH_ERR";
   const isVmUnknown = data.vmStatus === "N/A" || data.vmStatus === "";
   const footerMessage = isCollecting
-    ? "클라우드센터 가상머신 상태 체크 중..."
+    ? "클라우드센터 가상머신 상태를 확인하고 있습니다."
     : isVmUnknown
     ? "클라우드센터 가상머신 상태 정보를 확인할 수 없습니다."
     : isVmError
@@ -235,6 +226,7 @@ export default function CloudVmStatus() {
         actions={{
           actions: (
             <Dropdown
+              className="ct-status-card__dropdown"
               isOpen={isOpen}
               onSelect={onSelect}
               onOpenChange={setIsOpen}
@@ -243,131 +235,111 @@ export default function CloudVmStatus() {
                 <MenuToggle
                   ref={toggleRef}
                   variant="plain"
-                  aria-label="카드 메뉴"
+                  aria-expanded={isOpen}
+                  aria-label={isOpen ? "카드 메뉴 닫기" : "카드 메뉴 열기"}
                   onClick={() => setIsOpen(!isOpen)}
                 >
-                  <EllipsisVIcon />
+                  <span
+                    className={`ct-status-card__menu-arrow${isOpen ? " ct-status-card__menu-arrow--open" : ""}`}
+                    aria-hidden="true"
+                  />
                 </MenuToggle>
               )}
             >
               <DropdownList>
-                <DropdownItem
-                  isDisabled={isVmRunning}
-                  onClick={openResourceUpdateModal}
-                >
-                  클라우드센터VM 자원변경
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={!isVmRunning}
-                  onClick={() => openSelectActionModal("moldService")}
-                >
-                  Mold 서비스 제어
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={!isVmRunning}
-                  onClick={() => openSelectActionModal("moldDb")}
-                >
-                  Mold DB 제어
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={!isVmRunning}
-                  onClick={openSecondarySizeModal}
-                >
-                  Mold 세컨더리 용량 추가
-                </DropdownItem>
-                <DropdownItem onClick={() => openConfirmActionModal("snapshotBackup")}>
-                  스냅샷 백업
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={isVmRunning}
-                  onClick={() => openSelectActionModal("snapshotRollback")}
-                >
-                  스냅샷 복구
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={!isVmRunning}
-                  onClick={() => openSelectActionModal("dbBackup")}
-                >
-                  DB 백업
-                </DropdownItem>
+                <DropdownGroup label="자원" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={isVmRunning}
+                    onClick={openResourceUpdateModal}
+                  >
+                    클라우드센터VM 자원변경
+                  </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isVmRunning}
+                    onClick={openSecondarySizeModal}
+                  >
+                    Mold 세컨더리 용량 추가
+                  </DropdownItem>
+                </DropdownGroup>
+                <DropdownGroup label="서비스" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={!isVmRunning}
+                    onClick={() => openSelectActionModal("moldService")}
+                  >
+                    Mold 서비스 제어
+                  </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isVmRunning}
+                    onClick={() => openSelectActionModal("moldDb")}
+                  >
+                    Mold DB 제어
+                  </DropdownItem>
+                </DropdownGroup>
+                <DropdownGroup label="백업 / 복구" className="ct-status-card__menu-group">
+                  <DropdownItem onClick={() => openConfirmActionModal("snapshotBackup")}>
+                    스냅샷 백업
+                  </DropdownItem>
+                  <DropdownItem
+                    isDisabled={isVmRunning}
+                    onClick={() => openSelectActionModal("snapshotRollback")}
+                  >
+                    스냅샷 복구
+                  </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isVmRunning}
+                    onClick={() => openSelectActionModal("dbBackup")}
+                  >
+                    DB 백업
+                  </DropdownItem>
+                </DropdownGroup>
               </DropdownList>
             </Dropdown>
           ),
         }}
       >
-        <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-          <FlexItem>
-            <CardTitle>
-              <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-                <VirtualMachineIcon
-                  style={{ fontSize: "var(--pf-global--icon--FontSize--lg)" }}
-                  aria-hidden="true"
-                />
-                <span>클라우드센터 가상머신 상태</span>
-              </Flex>
-            </CardTitle>
-          </FlexItem>
-        </Flex>
+        <CardTitle>
+          <StatusCardHeading
+            icon={<span className="ct-status-card__emoji" aria-hidden="true">🖥</span>}
+            title="클라우드센터 가상머신 상태"
+            subtitle="Cloud Center VM"
+            tone="cloud-vm"
+          />
+        </CardTitle>
       </CardHeader>
 
       <CardBody>
-        <DescriptionList isCompact className="ct-status-card__dl">
-          <DescriptionListGroup>
-            <DescriptionListTerm>가상머신 상태</DescriptionListTerm>
-            <DescriptionListDescription>
-              <Label
-                className="ct-health-label"
-                color={statusMeta.color}
-                icon={statusMeta.icon}
-              >
-                {statusMeta.label}
-              </Label>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
+        <InfoGrid>
+          <InfoItem label="가상머신 상태" full>
+            <DotStatus tone={statusMeta.color}>
+              {statusMeta.label}
+            </DotStatus>
+          </InfoItem>
+          <InfoItem label="CPU">{data.cpu}</InfoItem>
+          <InfoItem label="Memory">{data.memory}</InfoItem>
+          <InfoItem label="Mold 서비스">{data.moldServiceStatus}</InfoItem>
+          <InfoItem label="Mold DB">{data.moldDbStatus}</InfoItem>
+        </InfoGrid>
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>Mold 서비스 상태</DescriptionListTerm>
-            <DescriptionListDescription>{data.moldServiceStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
+        <UsageProgress
+          label="ROOT Disk 사용량"
+          value={compactDiskUsage(data.rootDiskSize)}
+        />
+        <UsageProgress
+          label="세컨더리 Disk 사용량"
+          value={compactDiskUsage(data.secondaryDiskSize)}
+        />
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>Mold DB 상태</DescriptionListTerm>
-            <DescriptionListDescription>{data.moldDbStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
+        <CardDivider />
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>CPU</DescriptionListTerm>
-            <DescriptionListDescription>{data.cpu}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>Memory</DescriptionListTerm>
-            <DescriptionListDescription>{data.memory}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>ROOT Disk 크기</DescriptionListTerm>
-            <DescriptionListDescription>{data.rootDiskSize}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>세컨더리 Disk 크기</DescriptionListTerm>
-            <DescriptionListDescription>{data.secondaryDiskSize}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm className="pf-v5-u-align-self-flex-start">관리 NIC</DescriptionListTerm>
-            <DescriptionListDescription>
-              <Flex direction={{ default: "column" }}>
-                <FlexItem>{data.manageNicType}</FlexItem>
-                <FlexItem>{data.manageNicIp}</FlexItem>
-                <FlexItem>{data.manageNicPrefix}</FlexItem>
-                <FlexItem>{data.manageNicGw}</FlexItem>
-                <FlexItem>{data.manageNicDns}</FlexItem>
-              </Flex>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-        </DescriptionList>
+        <NicGroup
+          title={`관리 NIC - ${nicName(data.manageNicType) || "N/A"}`}
+          items={[
+            { label: "IP", value: stripStatusLabel(data.manageNicIp, "IP") },
+            { label: "PREFIX", value: stripStatusLabel(data.manageNicPrefix, "PREFIX") },
+            { label: "GW", value: stripStatusLabel(data.manageNicGw, "GW") },
+            { label: "DNS", value: stripStatusLabel(data.manageNicDns, "DNS") },
+          ]}
+        />
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>

@@ -5,32 +5,21 @@ import {
   CardTitle,
   CardBody,
   CardFooter,
-  Label,
-  Flex,
-  FlexItem,
-  DescriptionList,
-  DescriptionListGroup,
-  DescriptionListTerm,
-  DescriptionListDescription,
   Dropdown,
+  DropdownGroup,
   DropdownList,
   DropdownItem,
   MenuToggle,
 } from "@patternfly/react-core";
-import {
-  CubesIcon,
-  InfoCircleIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  EllipsisVIcon,
-} from "@patternfly/react-icons";
 
 import {
   STATUS_LOADING_LABEL,
-  StatusLoadingIcon,
+  STATUS_UNKNOWN_LABEL,
   StatusLoadingMessage,
 } from "./status-loading";
 import WwnListModal from "./wwn-list-modal";
+import ActionProgressModal from "../components/common/ActionProgressModal";
+import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import CheckedConfirmActionModal from "../components/common/CheckedConfirmActionModal";
 import SelectActionModal from "../components/common/SelectActionModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
@@ -38,23 +27,32 @@ import {
   fetchGfsResourceStatus,
   GFS_RESOURCE_STATUS_FALLBACK,
 } from "../services/api/gfs-resource-status";
+import {
+  formatMultipathSyncAction,
+  runMultipathSync,
+  summarizeMultipathSyncResult,
+  type MultipathSyncAction,
+} from "../services/api/multipath-sync";
+import {
+  DotStatus,
+  InfoGrid,
+  InfoItem,
+  StatusCardHeading,
+} from "./status-card-layout";
 import "./status-card.scss";
 
 const STATUS_META = {
   HEALTH_OK: {
     label: "Health OK",
     color: "green",
-    icon: <CheckCircleIcon />,
   },
   HEALTH_WARN: {
     label: "Health Warn",
     color: "orange",
-    icon: <ExclamationTriangleIcon />,
   },
   HEALTH_ERR: {
     label: "Health Err",
     color: "red",
-    icon: <ExclamationTriangleIcon />,
   },
 };
 
@@ -64,6 +62,17 @@ export default function GfsResourceStatus() {
   const [isExternalStorageRescanModalOpen, setIsExternalStorageRescanModalOpen] = React.useState(false);
   const [isWwnListModalOpen, setIsWwnListModalOpen] = React.useState(false);
   const [isHostRemoveModalOpen, setIsHostRemoveModalOpen] = React.useState(false);
+  const [multipathProgress, setMultipathProgress] = React.useState<{
+    isOpen: boolean;
+    title: string;
+    phase: ActionProgressPhase;
+    message: string;
+  }>({
+    isOpen: false,
+    title: "외부 스토리지 동기화",
+    phase: "running",
+    message: "",
+  });
 
   const handleStatusError = React.useCallback((error: unknown) => {
     console.error("gfs resource status API error:", error);
@@ -85,9 +94,45 @@ export default function GfsResourceStatus() {
     setIsExternalStorageSyncModalOpen(false);
   };
 
+  const runExternalStorageAction = async (action: MultipathSyncAction) => {
+    const title = formatMultipathSyncAction(action);
+
+    setMultipathProgress({
+      isOpen: true,
+      title,
+      phase: "running",
+      message: `${title}을 실행하고 있습니다.`,
+    });
+
+    try {
+      const result = await runMultipathSync(action);
+
+      setMultipathProgress({
+        isOpen: true,
+        title,
+        phase: "success",
+        message: summarizeMultipathSyncResult(result, `${title}이 완료되었습니다.`),
+      });
+    } catch (error) {
+      console.error("multipath sync API error:", error);
+      setMultipathProgress({
+        isOpen: true,
+        title,
+        phase: "error",
+        message: error instanceof Error
+          ? error.message
+          : `${title}에 실패했습니다.`,
+      });
+    }
+  };
+
+  const closeMultipathProgressModal = () => {
+    setMultipathProgress((prev) => ({ ...prev, isOpen: false }));
+  };
+
   const confirmExternalStorageSync = () => {
-    // TODO: 백엔드 API 전환 후 multipath sync API로 연결합니다.
     setIsExternalStorageSyncModalOpen(false);
+    void runExternalStorageAction("sync");
   };
 
   const openExternalStorageRescanModal = () => {
@@ -100,8 +145,8 @@ export default function GfsResourceStatus() {
   };
 
   const confirmExternalStorageRescan = () => {
-    // TODO: 백엔드 API 전환 후 storage rescan API로 연결합니다.
     setIsExternalStorageRescanModalOpen(false);
+    void runExternalStorageAction("rescan");
   };
 
   const openWwnListModal = () => {
@@ -128,41 +173,19 @@ export default function GfsResourceStatus() {
     setIsHostRemoveModalOpen(false);
   };
 
-  const renderStatusDetail = (statusKey: string, detail?: string, detailLines?: string[]) => {
-    const status =
-      isCollecting
-        ? {
-          label: STATUS_LOADING_LABEL,
-          color: "orange",
-          icon: <StatusLoadingIcon />,
-        }
-        : (STATUS_META as any)[statusKey] ?? {
-          label: statusKey || "N/A",
-          color: "orange",
-          icon: <InfoCircleIcon />,
-        };
-
-    return (
-      <Flex className="ct-status-card__detail" gap={{ default: "gapSm" }}>
-        <Label
-          className="ct-health-label"
-          color={status.color}
-          icon={status.icon}
-        >
-          {status.label}
-        </Label>
-        {detailLines && detailLines.length > 0 ? (
-          <Flex direction={{ default: "column" }} className="ct-status-card__detail-text">
-            {detailLines.map((line, index) => (
-              <FlexItem key={`${line}-${index}`}>{line}</FlexItem>
-            ))}
-          </Flex>
-        ) : (
-          <span className="ct-status-card__detail-text">{detail}</span>
-        )}
-      </Flex>
-    );
-  };
+  const statusDetail = (statusKey: string) => (
+    isCollecting
+      ? {
+        label: STATUS_LOADING_LABEL,
+        color: "orange",
+      }
+      : (STATUS_META as any)[statusKey] ?? {
+        label: statusKey || STATUS_UNKNOWN_LABEL,
+        color: "orange",
+      }
+  );
+  const fenceStatus = statusDetail(data.fenceDeviceStatus);
+  const lockStatus = statusDetail(data.lockDeviceStatus);
 
   return (
     <Card className="ct-status-card">
@@ -171,6 +194,7 @@ export default function GfsResourceStatus() {
         actions={{
           actions: (
             <Dropdown
+              className="ct-status-card__dropdown"
               isOpen={isOpen}
               onSelect={onSelect}
               onOpenChange={setIsOpen}
@@ -179,69 +203,76 @@ export default function GfsResourceStatus() {
                 <MenuToggle
                   ref={toggleRef}
                   variant="plain"
-                  aria-label="카드 메뉴"
+                  aria-expanded={isOpen}
+                  aria-label={isOpen ? "카드 메뉴 닫기" : "카드 메뉴 열기"}
                   onClick={() => setIsOpen(!isOpen)}
                 >
-                  <EllipsisVIcon />
+                  <span
+                    className={`ct-status-card__menu-arrow${isOpen ? " ct-status-card__menu-arrow--open" : ""}`}
+                    aria-hidden="true"
+                  />
                 </MenuToggle>
               )}
             >
               <DropdownList>
-                <DropdownItem onClick={openExternalStorageSyncModal}>
-                  외부 스토리지 동기화
-                </DropdownItem>
-                <DropdownItem onClick={openExternalStorageRescanModal}>
-                  외부 스토리지 재검색
-                </DropdownItem>
-                <DropdownItem onClick={openWwnListModal}>
-                  WWN 목록 조회
-                </DropdownItem>
-                <DropdownItem onClick={openHostRemoveModal}>
-                  호스트 제거
-                </DropdownItem>
+                <DropdownGroup label="외부 스토리지" className="ct-status-card__menu-group">
+                  <DropdownItem onClick={openExternalStorageSyncModal}>
+                    외부 스토리지 동기화
+                  </DropdownItem>
+                  <DropdownItem onClick={openExternalStorageRescanModal}>
+                    외부 스토리지 재검색
+                  </DropdownItem>
+                </DropdownGroup>
+                <DropdownGroup label="장치 정보" className="ct-status-card__menu-group">
+                  <DropdownItem onClick={openWwnListModal}>
+                    WWN 목록 조회
+                  </DropdownItem>
+                </DropdownGroup>
+                <DropdownGroup label="호스트 관리" className="ct-status-card__menu-group">
+                  <DropdownItem onClick={openHostRemoveModal}>
+                    호스트 제거
+                  </DropdownItem>
+                </DropdownGroup>
               </DropdownList>
             </Dropdown>
           ),
         }}
       >
-        <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-          <FlexItem>
-            <CardTitle>
-              <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-                <CubesIcon
-                  style={{ fontSize: "var(--pf-global--icon--FontSize--lg)" }}
-                  aria-hidden="true"
-                />
-                <span>GFS 리소스 상태</span>
-              </Flex>
-            </CardTitle>
-          </FlexItem>
-        </Flex>
+        <CardTitle>
+          <StatusCardHeading
+            icon={<span className="ct-status-card__emoji" aria-hidden="true">⛓</span>}
+            title="GFS 리소스 상태"
+            subtitle="Global File System"
+            tone="gfs"
+          />
+        </CardTitle>
       </CardHeader>
 
       <CardBody>
-        <DescriptionList isCompact className="ct-status-card__dl">
-          <DescriptionListGroup>
-            <DescriptionListTerm>펜스 장치 상태</DescriptionListTerm>
-            <DescriptionListDescription>
-              {renderStatusDetail(data.fenceDeviceStatus, data.fenceDeviceDetail)}
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>잠금 장치 상태</DescriptionListTerm>
-            <DescriptionListDescription>
-              {renderStatusDetail(data.lockDeviceStatus, undefined, data.lockDeviceDetails)}
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>GFS 장치 상태</DescriptionListTerm>
-            <DescriptionListDescription>
-              {renderStatusDetail(data.gfsDeviceStatus, undefined, data.gfsDeviceDetails)}
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-        </DescriptionList>
+        <InfoGrid>
+          <InfoItem label="펜스 장치 상태">
+            <DotStatus tone={fenceStatus.color}>
+              {fenceStatus.label}
+            </DotStatus>
+          </InfoItem>
+          <InfoItem label="잠금 장치 상태">
+            <DotStatus tone={lockStatus.color}>
+              {lockStatus.label}
+            </DotStatus>
+          </InfoItem>
+          <InfoItem label="펜스 장치 상세" full mono>
+            {data.fenceDeviceDetail || "N/A"}
+          </InfoItem>
+          <InfoItem label="잠금 장치 상세" full mono>
+            <span className="ct-status-card__line-stack">
+              {data.lockDeviceDetails.length > 0
+                ? data.lockDeviceDetails.map((line, index) => (
+                    <span key={`${line}-${index}`}>{line}</span>
+                  ))
+                : <span>N/A</span>}
+            </span>
+          </InfoItem>
+        </InfoGrid>
       </CardBody>
 
       <CardFooter
@@ -249,7 +280,7 @@ export default function GfsResourceStatus() {
         style={{ color: isCollecting ? "#f0ab00" : data.footerColor }}
       >
         {isCollecting ? (
-          <StatusLoadingMessage>GFS 리소스 상태 체크 중...</StatusLoadingMessage>
+          <StatusLoadingMessage>GFS 리소스 상태를 확인하고 있습니다.</StatusLoadingMessage>
         ) : data.footerMessage}
       </CardFooter>
 
@@ -271,6 +302,14 @@ export default function GfsResourceStatus() {
         checkLabel="외부 스토리지 연결 확인"
         onClose={closeExternalStorageRescanModal}
         onConfirm={confirmExternalStorageRescan}
+      />
+
+      <ActionProgressModal
+        isOpen={multipathProgress.isOpen}
+        title={multipathProgress.title}
+        phase={multipathProgress.phase}
+        message={multipathProgress.message}
+        onClose={closeMultipathProgressModal}
       />
 
       <WwnListModal

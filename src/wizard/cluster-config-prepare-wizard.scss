@@ -297,6 +297,227 @@
   color: #6a6e73;
 }
 
+.ct-file-attach {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.ct-file-attach__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ct-file-attach__surface {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 50px;
+  padding: 9px 12px;
+  border: 1px solid #bfd6ff;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f7ff 100%);
+  color: #10233f;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(31, 112, 255, 0.08);
+}
+
+.ct-file-attach__surface:hover,
+.ct-file-attach__surface:focus-visible {
+  border-color: #1f70ff;
+  box-shadow: 0 0 0 3px rgba(31, 112, 255, 0.14);
+  outline: none;
+}
+
+.ct-file-attach--selected .ct-file-attach__surface {
+  border-color: #59b56b;
+  background: #f5fff7;
+}
+
+.ct-file-attach--disabled .ct-file-attach__surface {
+  cursor: not-allowed;
+  opacity: 0.62;
+  box-shadow: none;
+}
+
+.ct-file-attach__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #e7f0ff;
+  color: #1f70ff;
+}
+
+.ct-file-attach__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.ct-file-attach__copy strong {
+  overflow: hidden;
+  color: #10233f;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-file-attach__copy small {
+  color: #5b6b7f;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.ct-file-attach__action {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #1f70ff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ct-file-attach__clear {
+  --pf-v6-c-button--PaddingBlockStart: 0;
+  --pf-v6-c-button--PaddingBlockEnd: 0;
+  --pf-v6-c-button--PaddingInlineStart: 14px;
+  --pf-v6-c-button--PaddingInlineEnd: 14px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  min-width: 84px;
+  min-height: 36px;
+  border-radius: 999px;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.ct-file-attach__clear .pf-v6-c-button__content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+}
+
+.ct-file-attach__clear .pf-v6-c-button__icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ct-cluster-config-wizard__ssh-preview {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.ct-cluster-config-wizard__ssh-preview-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #cfe1ff;
+  border-radius: 8px;
+  background: #f4f8ff;
+  color: #1b355f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ct-cluster-config-wizard__ssh-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.ct-cluster-config-wizard__ssh-preview-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d8e4f5;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.ct-cluster-config-wizard__ssh-preview-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.pf-v6-theme-dark {
+  .ct-file-attach__surface {
+    border-color: #344054;
+    background: #151b23;
+    color: #f8fafc;
+    box-shadow: none;
+  }
+
+  .ct-file-attach__surface:hover,
+  .ct-file-attach__surface:focus-visible {
+    border-color: #6aa4ff;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2);
+  }
+
+  .ct-file-attach--selected .ct-file-attach__surface {
+    border-color: #46a758;
+    background: #12251a;
+  }
+
+  .ct-file-attach__icon {
+    background: #203754;
+    color: #93c5fd;
+  }
+
+  .ct-file-attach__copy strong {
+    color: #f8fafc;
+  }
+
+  .ct-file-attach__copy small {
+    color: #a9b7c8;
+  }
+
+  .ct-file-attach__action {
+    background: #2f7df6;
+  }
+
+  .ct-cluster-config-wizard__ssh-preview-summary {
+    border-color: #315476;
+    background: #162338;
+    color: #dbeafe;
+  }
+
+  .ct-cluster-config-wizard__ssh-preview-card {
+    border-color: #344054;
+    background: #151b23;
+  }
+
+  .ct-cluster-config-wizard__ssh-preview-title {
+    color: #f8fafc;
+  }
+}
+
 .ct-chevron {
   transition: transform 0.2s ease;
   display: inline-flex;
@@ -313,15 +534,124 @@
 
 .ct-cluster-config-wizard__status-list {
   margin-top: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  gap: 10px;
 }
 
-.ct-cluster-config-wizard__status-list div {
-  display: flex;
+.ct-cluster-config-wizard__deploy-alert {
+  margin-block-start: 16px;
+}
+
+.ct-cluster-config-wizard__status-row {
+  display: grid;
+  grid-template-columns: max-content minmax(180px, 1fr) minmax(0, 1.4fr);
   align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid #d8dadd;
+  border-radius: 8px;
+  background: #fff;
+
+  span {
+    color: #1f1f1f;
+    font-weight: 700;
+  }
+
+  small {
+    min-width: 0;
+    color: #6a6e73;
+    overflow-wrap: anywhere;
+  }
+}
+
+.ct-cluster-config-wizard__status-row--running {
+  border-color: #73bcf7;
+  background: #f5f9ff;
+}
+
+.ct-cluster-config-wizard__status-row--succeeded {
+  border-color: #95d58e;
+  background: #f4fbf1;
+}
+
+.ct-cluster-config-wizard__status-row--failed {
+  border-color: #f4b1b2;
+  background: #fdf2f2;
+}
+
+.ct-cluster-config-wizard__target-results {
+  display: grid;
   gap: 12px;
+  margin-block-start: 18px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.ct-cluster-config-wizard__target-results-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+
+  strong {
+    color: #0f172a;
+    font-size: 15px;
+  }
+
+  span {
+    color: #6a6e73;
+    font-size: 13px;
+  }
+}
+
+.ct-cluster-config-wizard__target-results-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ct-cluster-config-wizard__target-result {
+  display: grid;
+  grid-template-columns: max-content minmax(120px, 0.75fr) max-content minmax(0, 1.4fr);
+  align-items: center;
+  gap: 10px;
+  min-inline-size: 0;
+  padding-block: 10px;
+  padding-inline: 12px;
+  border: 1px solid #d8dadd;
+  border-radius: 10px;
+  background: #fff;
+
+  strong,
+  span {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+
+  strong {
+    color: #0f172a;
+  }
+
+  small {
+    color: #6a6e73;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  span {
+    color: #334155;
+  }
+}
+
+.ct-cluster-config-wizard__target-result--failed {
+  border-color: #f4b1b2;
+  background: #fff7f7;
+}
+
+.ct-cluster-config-wizard__target-result--success {
+  border-color: #95d58e;
+  background: #f7fcf4;
 }
 
 .ct-cluster-config-wizard__download-list {
@@ -357,6 +687,10 @@
 
 @media (max-width: 768px) {
   .ct-cluster-config-wizard__type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ct-cluster-config-wizard__target-result {
     grid-template-columns: 1fr;
   }
 }

@@ -25,12 +25,23 @@ import {
 import { InfoCircleIcon, AngleRightIcon, ExclamationTriangleIcon } from "@patternfly/react-icons";
 
 import ValidationErrorModal from "../components/common/ValidationErrorModal";
+import { fetchClusterConfigProfile } from "../services/api/cluster-config";
+import { fetchDiskInventory, type DiskInventoryOption } from "../services/api/inventory";
+import {
+  formatMultipathSyncAction,
+  MultipathSyncError,
+  runMultipathSync,
+  type MultipathSyncAction,
+  type MultipathSyncResult,
+} from "../services/api/multipath-sync";
 import "./gfs-storage-configure-wizard.scss";
 import { isIpv4 } from "./validation";
 
 type DeployPhase = "idle" | "running" | "done";
 type ExternalSyncMode = "duplication" | "single" | "skip";
+type ExternalSyncPhase = "idle" | "running" | "success" | "error";
 type IpmiMode = "common" | "individual";
+type InventoryLoadState = "idle" | "loading" | "success" | "error";
 
 interface MonitoringHostIpmi {
   hostName: string;
@@ -44,15 +55,6 @@ interface GfsStorageConfigureWizardModalProps {
   onClose: () => void;
 }
 
-const DEFAULT_HOSTS: MonitoringHostIpmi[] = [
-  { hostName: "", ip: "", username: "", password: "" },
-];
-
-const DEFAULT_DISKS = [
-  { id: "mpathb", label: "TEST!! /dev/mapper/mpathb (active) 1.8T DELL 3600508" },
-  { id: "sdb", label: "TEST!! /dev/sdb (SAS) 900G SEAGATE 5000C500" },
-];
-
 export default function GfsStorageConfigureWizardModal({
   isOpen,
   onClose,
@@ -62,7 +64,12 @@ export default function GfsStorageConfigureWizardModal({
   const [ipmiMode, setIpmiMode] = React.useState<IpmiMode>("common");
   const [ipmiCommonUser, setIpmiCommonUser] = React.useState("");
   const [ipmiCommonPass, setIpmiCommonPass] = React.useState("");
-  const [ipmiHosts, setIpmiHosts] = React.useState<MonitoringHostIpmi[]>(DEFAULT_HOSTS);
+  const [ipmiHosts, setIpmiHosts] = React.useState<MonitoringHostIpmi[]>([]);
+  const [gfsDiskOptions, setGfsDiskOptions] = React.useState<DiskInventoryOption[]>([]);
+  const [diskLoadState, setDiskLoadState] = React.useState<InventoryLoadState>("idle");
+  const [diskLoadError, setDiskLoadError] = React.useState("");
+  const [clusterLoadState, setClusterLoadState] = React.useState<InventoryLoadState>("idle");
+  const [clusterLoadError, setClusterLoadError] = React.useState("");
 
   const [reviewOpen, setReviewOpen] = React.useState({
     external: true,
@@ -73,6 +80,9 @@ export default function GfsStorageConfigureWizardModal({
   const [cancelConfirmOpen, setCancelConfirmOpen] = React.useState(false);
   const [validationMessage, setValidationMessage] = React.useState("");
   const [externalSyncCompleted, setExternalSyncCompleted] = React.useState(false);
+  const [externalSyncPhase, setExternalSyncPhase] = React.useState<ExternalSyncPhase>("idle");
+  const [externalSyncMessage, setExternalSyncMessage] = React.useState("");
+  const [externalSyncResult, setExternalSyncResult] = React.useState<MultipathSyncResult | null>(null);
   const [deployPhase, setDeployPhase] = React.useState<DeployPhase>("idle");
   const [disableNav, setDisableNav] = React.useState(false);
 
@@ -84,12 +94,20 @@ export default function GfsStorageConfigureWizardModal({
     setIpmiMode("common");
     setIpmiCommonUser("");
     setIpmiCommonPass("");
-    setIpmiHosts(DEFAULT_HOSTS);
+    setIpmiHosts([]);
+    setGfsDiskOptions([]);
+    setDiskLoadState("idle");
+    setDiskLoadError("");
+    setClusterLoadState("idle");
+    setClusterLoadError("");
     setReviewOpen({ external: true, disk: true, ipmi: true });
     setConfirmOpen(false);
     setCancelConfirmOpen(false);
     setValidationMessage("");
     setExternalSyncCompleted(false);
+    setExternalSyncPhase("idle");
+    setExternalSyncMessage("");
+    setExternalSyncResult(null);
     setDeployPhase("idle");
     setDisableNav(false);
   }, []);
@@ -103,12 +121,95 @@ export default function GfsStorageConfigureWizardModal({
     setCancelConfirmOpen(true);
   };
 
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    let isActive = true;
+
+    setDiskLoadState("loading");
+    setDiskLoadError("");
+    fetchDiskInventory("gfs")
+      .then((options) => {
+        console.log("disk options:", options);
+        if (!isActive) return;
+        setGfsDiskOptions(options);
+        setSelectedDisks((prev) => prev.filter((diskId) => options.some((disk) => disk.value === diskId)));
+        setDiskLoadState("success");
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setGfsDiskOptions([]);
+        setSelectedDisks([]);
+        setDiskLoadState("error");
+        setDiskLoadError(error instanceof Error ? error.message : "GFS 디스크 목록을 불러오지 못했습니다.");
+      });
+
+    setClusterLoadState("loading");
+    setClusterLoadError("");
+    fetchClusterConfigProfile()
+      .then((profile) => {
+        if (!isActive) return;
+
+        const hosts = profile.hosts
+          .map((host, index) => ({
+            hostName: host.hostname || `host-${host.index || index + 1}`,
+            ip: "",
+            username: "",
+            password: "",
+          }))
+          .filter((host) => host.hostName);
+
+        setIpmiHosts((prev) => hosts.map((host) => {
+          const existing = prev.find((item) => item.hostName === host.hostName);
+          return existing ? { ...host, ...existing, hostName: host.hostName } : host;
+        }));
+        setClusterLoadState("success");
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setIpmiHosts([]);
+        setClusterLoadState("error");
+        setClusterLoadError(error instanceof Error ? error.message : "cluster.json 정보를 불러오지 못했습니다.");
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOpen]);
+
   const externalSyncLabel =
     externalSyncMode === "duplication"
       ? "이중화"
       : externalSyncMode === "single"
         ? "단중화"
         : "건너뛰기";
+  const externalSyncAction: MultipathSyncAction | null =
+    externalSyncMode === "duplication"
+      ? "sync"
+      : externalSyncMode === "single"
+        ? "rescan"
+        : null;
+  const isExternalSyncRunning = externalSyncPhase === "running";
+  const externalSyncStatusText =
+    externalSyncMode === "skip"
+      ? "건너뜀"
+      : externalSyncPhase === "success"
+        ? "입력 완료"
+        : externalSyncPhase === "error"
+          ? "실패"
+          : externalSyncPhase === "running"
+            ? "실행 중"
+            : "실행 필요";
+  const externalSyncStatusColor =
+    externalSyncPhase === "success"
+      ? "green"
+      : externalSyncPhase === "error"
+        ? "red"
+        : externalSyncPhase === "running"
+          ? "blue"
+          : externalSyncMode === "skip"
+            ? "grey"
+            : "orange";
 
   const updateIpmiHost = (index: number, patch: Partial<MonitoringHostIpmi>) => {
     setIpmiHosts((prev) => prev.map((host, hostIndex) => (
@@ -123,6 +224,18 @@ export default function GfsStorageConfigureWizardModal({
 
     if (selectedDisks.length === 0) {
       return "GFS 디스크를 선택해주세요.";
+    }
+
+    if (diskLoadState === "error") {
+      return `GFS 디스크 정보를 확인해주세요. ${diskLoadError}`;
+    }
+
+    if (clusterLoadState === "error") {
+      return `cluster.json 정보를 확인해주세요. ${clusterLoadError}`;
+    }
+
+    if (ipmiHosts.length === 0) {
+      return "cluster.json의 호스트 정보를 확인해주세요.";
     }
 
     const missingIpmi = ipmiHosts.find((host) => !host.ip.trim());
@@ -149,6 +262,47 @@ export default function GfsStorageConfigureWizardModal({
     return "";
   };
 
+  const resetExternalSyncExecution = () => {
+    setExternalSyncCompleted(false);
+    setExternalSyncPhase("idle");
+    setExternalSyncMessage("");
+    setExternalSyncResult(null);
+  };
+
+  const executeExternalStorageSync = async () => {
+    if (!externalSyncAction) {
+      return;
+    }
+
+    const actionLabel = formatMultipathSyncAction(externalSyncAction);
+
+    setExternalSyncCompleted(false);
+    setExternalSyncPhase("running");
+    setExternalSyncMessage(`${actionLabel}을 실행하고 있습니다. 호스트 수와 스토리지 상태에 따라 시간이 걸릴 수 있습니다.`);
+    setExternalSyncResult(null);
+
+    try {
+      const result = await runMultipathSync(externalSyncAction);
+
+      setExternalSyncResult(result);
+      setExternalSyncCompleted(true);
+      setExternalSyncPhase("success");
+      setExternalSyncMessage(`${actionLabel}이 완료되었습니다. 다음 단계로 진행할 수 있습니다.`);
+    } catch (error) {
+      const result = error instanceof MultipathSyncError ? error.result : null;
+
+      console.error("multipath sync API error:", error);
+      setExternalSyncResult(result);
+      setExternalSyncCompleted(false);
+      setExternalSyncPhase("error");
+      setExternalSyncMessage(
+        error instanceof Error
+          ? error.message
+          : `${actionLabel}에 실패했습니다.`
+      );
+    }
+  };
+
   const startDeploy = () => {
     const message = validateGfsStorage();
     if (message) {
@@ -164,7 +318,7 @@ export default function GfsStorageConfigureWizardModal({
     nextStepRef.current?.();
   };
 
-  const diskLabel = (diskId: string) => DEFAULT_DISKS.find((disk) => disk.id === diskId)?.label || diskId;
+  const diskLabel = (diskId: string) => gfsDiskOptions.find((disk) => disk.value === diskId)?.label || diskId;
 
   const wizardFooter = (
     activeStep: any,
@@ -179,7 +333,7 @@ export default function GfsStorageConfigureWizardModal({
     const isDeploy = stepId === "gfs-deploy";
     const isFinish = stepId === "gfs-finish";
     const isExternalSync = stepId === "gfs-external-storage-sync";
-    const isExternalSyncRequired = isExternalSync && externalSyncMode === "duplication" && !externalSyncCompleted;
+    const isExternalSyncRequired = isExternalSync && Boolean(externalSyncAction) && !externalSyncCompleted;
 
     if (isReview) {
       nextStepRef.current = goToNextStep;
@@ -207,18 +361,16 @@ export default function GfsStorageConfigureWizardModal({
     };
 
     const primaryLabel = isReview
-      ? "배포"
+      ? "구성"
       : isDeploy
-        ? deployPhase === "running"
-          ? "완료"
-          : "다음"
+        ? "완료"
       : isFinish
         ? "닫기"
         : "다음";
 
     return (
       <div className="ct-gfs-storage-wizard__footer">
-        <Button variant="primary" onClick={handlePrimary} isDisabled={isExternalSyncRequired}>
+        <Button variant="primary" onClick={handlePrimary} isDisabled={isExternalSyncRequired || isExternalSyncRunning}>
           {primaryLabel}
         </Button>
         {!isFirst && !isDeploy && !isFinish && (
@@ -249,11 +401,13 @@ export default function GfsStorageConfigureWizardModal({
           onSave={handleClose}
           width="100%"
           navAriaLabel="GFS 스토리지 구성 단계"
-          className={
-            disableNav
-              ? "ct-gfs-storage-wizard ct-gfs-storage-wizard--nav-locked"
-              : "ct-gfs-storage-wizard"
-          }
+          isVisitRequired
+          className={[
+            "ct-gfs-storage-wizard",
+            disableNav ? "ct-gfs-storage-wizard--nav-locked" : "",
+            deployPhase !== "idle" ? "ct-wizard--execution-visible" : "",
+            deployPhase === "done" ? "ct-wizard--complete-visible" : "",
+          ].join(" ")}
           footer={wizardFooter}
           onStepChange={(_event, currentStep) => {
             const stepId = String(currentStep.id);
@@ -318,38 +472,43 @@ export default function GfsStorageConfigureWizardModal({
               <Form className="ct-gfs-storage-wizard__section ct-gfs-storage-wizard__form-horizontal" isHorizontal>
                 <FormGroup label="외부 스토리지 동기화 방식" isRequired fieldId="gfs-external-sync-mode">
                   <div>
-                    <Radio
-                      id="gfs-external-duplication"
-                      name="gfs-external-sync"
-                      label="이중화"
-                      isChecked={externalSyncMode === "duplication"}
-                      onChange={() => {
-                        setExternalSyncMode("duplication");
-                        setExternalSyncCompleted(false);
-                      }}
-                    />
-                    <Radio
-                      id="gfs-external-single"
-                      name="gfs-external-sync"
-                      label="단중화"
-                      isChecked={externalSyncMode === "single"}
-                      onChange={() => {
-                        setExternalSyncMode("single");
-                        setExternalSyncCompleted(false);
-                      }}
-                    />
-                    <Radio
-                      id="gfs-external-skip"
-                      name="gfs-external-sync"
-                      label="건너뛰기"
-                      isChecked={externalSyncMode === "skip"}
-                      onChange={() => {
-                        setExternalSyncMode("skip");
-                        setExternalSyncCompleted(false);
-                      }}
-                    />
+                    <div className="ct-gfs-storage-wizard__choice-grid ct-gfs-storage-wizard__choice-grid--three">
+                      <Radio
+                        id="gfs-external-duplication"
+                        name="gfs-external-sync"
+                        label="이중화"
+                        isChecked={externalSyncMode === "duplication"}
+                        isDisabled={isExternalSyncRunning}
+                        onChange={() => {
+                          setExternalSyncMode("duplication");
+                          resetExternalSyncExecution();
+                        }}
+                      />
+                      <Radio
+                        id="gfs-external-single"
+                        name="gfs-external-sync"
+                        label="단중화"
+                        isChecked={externalSyncMode === "single"}
+                        isDisabled={isExternalSyncRunning}
+                        onChange={() => {
+                          setExternalSyncMode("single");
+                          resetExternalSyncExecution();
+                        }}
+                      />
+                      <Radio
+                        id="gfs-external-skip"
+                        name="gfs-external-sync"
+                        label="건너뛰기"
+                        isChecked={externalSyncMode === "skip"}
+                        isDisabled={isExternalSyncRunning}
+                        onChange={() => {
+                          setExternalSyncMode("skip");
+                          resetExternalSyncExecution();
+                        }}
+                      />
+                    </div>
                     <div className="ct-gfs-storage-wizard__helper-text">
-                      이중화 옵션 선택 시 외부 스토리지 동기화를 완료한 후 다음 단계로 진행해 주세요.
+                      이중화는 multipath 동기화, 단중화는 디스크 재검색을 실행한 후 다음 단계로 진행합니다.
                     </div>
                   </div>
                 </FormGroup>
@@ -357,17 +516,49 @@ export default function GfsStorageConfigureWizardModal({
                   <div className="ct-gfs-storage-wizard__external-sync-action">
                     <Button
                       variant="secondary"
-                      isDisabled={externalSyncMode !== "duplication"}
-                      onClick={() => setExternalSyncCompleted(true)}
+                      isDisabled={!externalSyncAction || isExternalSyncRunning}
+                      onClick={() => void executeExternalStorageSync()}
                     >
-                      외부 스토리지 동기화 활성화
+                      {isExternalSyncRunning && <Spinner size="sm" />}
+                      {externalSyncAction
+                        ? `${formatMultipathSyncAction(externalSyncAction)} 실행`
+                        : "동기화 건너뜀"}
                     </Button>
-                    {externalSyncMode === "duplication" && (
-                      <Label color={externalSyncCompleted ? "green" : "orange"}>
-                        {externalSyncCompleted ? "동기화 완료" : "동기화 필요"}
-                      </Label>
-                    )}
+                    <Label color={externalSyncStatusColor}>
+                      {externalSyncStatusText}
+                    </Label>
                   </div>
+                  {externalSyncMessage && (
+                    <Alert
+                      isInline
+                      variant={externalSyncPhase === "error" ? "danger" : externalSyncPhase === "success" ? "success" : "info"}
+                      title={externalSyncMessage}
+                      className="ct-gfs-storage-wizard__sync-message"
+                    />
+                  )}
+                  {externalSyncResult && (
+                    <div className="ct-gfs-storage-wizard__sync-result">
+                      {(externalSyncResult.results.length > 0 ? externalSyncResult.results : [{
+                        hostname: "",
+                        target: externalSyncResult.target || "local",
+                        code: externalSyncResult.code,
+                        message: externalSyncResult.message,
+                        steps: externalSyncResult.steps,
+                      }]).map((target, index) => (
+                        <div
+                          key={`${target.hostname || target.target}-${index}`}
+                          className="ct-gfs-storage-wizard__sync-target"
+                        >
+                          <div className="ct-gfs-storage-wizard__sync-target-main">
+                            <strong>{target.hostname || target.target}</strong>
+                            <Label color={target.code === 200 ? "green" : "red"}>
+                              {target.code === 200 ? "성공" : "실패"}
+                            </Label>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </FormGroup>
               </Form>
               <Alert
@@ -392,7 +583,7 @@ export default function GfsStorageConfigureWizardModal({
           <WizardStep
             name="GFS 디스크 구성"
             id="gfs-disk-configure"
-            isDisabled={externalSyncMode === "duplication" && !externalSyncCompleted}
+            isDisabled={Boolean(externalSyncAction) && !externalSyncCompleted}
           >
             <div className="ct-gfs-storage-wizard__content">
               <Content component="p">
@@ -400,22 +591,60 @@ export default function GfsStorageConfigureWizardModal({
               </Content>
               <Form className="ct-gfs-storage-wizard__section ct-gfs-storage-wizard__form-horizontal" isHorizontal>
                 <FormGroup label="GFS용 디스크 구성 대상 장치" isRequired fieldId="gfs-disk-list">
-                  <div className="ct-gfs-storage-wizard__disk-list">
-                    {DEFAULT_DISKS.map((disk) => (
-                      <div key={disk.id} className="ct-gfs-storage-wizard__disk-item">
-                        <Checkbox
-                          id={`gfs-disk-${disk.id}`}
-                          label={disk.label}
-                          isChecked={selectedDisks.includes(disk.id)}
-                          onChange={(_event, checked) => {
-                            setSelectedDisks((prev) =>
-                              checked ? [...prev, disk.id] : prev.filter((item) => item !== disk.id)
-                            );
-                          }}
-                        />
+                  {diskLoadState === "loading" ? (
+                    <div className="ct-gfs-storage-wizard__loading">
+                      <Spinner size="sm" />
+                      <span>GFS 디스크 목록을 불러오는 중입니다.</span>
+                    </div>
+                  ) : diskLoadState === "error" ? (
+                    <Alert
+                      isInline
+                      variant="danger"
+                      title="GFS 디스크 목록을 불러오지 못했습니다."
+                      className="ct-gfs-storage-wizard__inline-alert"
+                    >
+                      {diskLoadError}
+                    </Alert>
+                  ) : gfsDiskOptions.length === 0 ? (
+                    <Alert
+                      isInline
+                      variant="warning"
+                      title="GFS 디스크 후보가 없습니다."
+                      className="ct-gfs-storage-wizard__inline-alert"
+                    >
+                      외부 스토리지 동기화를 먼저 실행했는지 확인한 후 다시 시도하십시오.
+                    </Alert>
+                  ) : (
+                    <div className="ct-gfs-storage-wizard__disk-list" role="table" aria-label="GFS 디스크 목록">
+                      <div className="ct-gfs-storage-wizard__disk-row ct-gfs-storage-wizard__disk-row--head" role="row">
+                        <span role="columnheader">선택</span>
+                        <span role="columnheader">디스크 이름</span>
+                        <span role="columnheader">UUID</span>
+                        <span role="columnheader">사이즈</span>
+                        <span role="columnheader">상태</span>
                       </div>
-                    ))}
-                  </div>
+                      {gfsDiskOptions.map((disk) => (
+                        <label key={disk.value} className="ct-gfs-storage-wizard__disk-row" role="row">
+                          <span role="cell">
+                            <Checkbox
+                              id={`gfs-disk-${disk.value.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+                              aria-label={`${disk.name || disk.value} 선택`}
+                              isChecked={selectedDisks.includes(disk.value)}
+                              onChange={(_event, checked) => {
+                                setSelectedDisks((prev) =>
+                                  checked ? [...prev, disk.value] : prev.filter((item) => item !== disk.value)
+                                );
+                              }}
+                            />
+                          </span>
+                          <strong role="cell">{disk.device || "-"}</strong>
+                          <span role="cell">{disk.deviceId || "-"}</span>
+                          <span role="cell">{disk.size || "-"}</span>
+                          <span role="cell">{disk.state || "-"}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </FormGroup>
               </Form>
               <Alert
@@ -438,15 +667,31 @@ export default function GfsStorageConfigureWizardModal({
           <WizardStep
             name="IPMI 정보"
             id="gfs-ipmi"
-            isDisabled={externalSyncMode === "duplication" && !externalSyncCompleted}
+            isDisabled={Boolean(externalSyncAction) && !externalSyncCompleted}
           >
             <div className="ct-gfs-storage-wizard__content">
               <Content component="p">
                 클러스터를 구성하기 위한 각 호스트의 IPMI 정보를 설정합니다. 아래의 항목에 값을 입력하십시오.
               </Content>
+              {clusterLoadState === "loading" && (
+                <div className="ct-gfs-storage-wizard__loading">
+                  <Spinner size="sm" />
+                  <span>cluster.json의 호스트 정보를 불러오는 중입니다.</span>
+                </div>
+              )}
+              {clusterLoadState === "error" && (
+                <Alert
+                  isInline
+                  variant="danger"
+                  title="cluster.json 호스트 정보를 불러오지 못했습니다."
+                  className="ct-gfs-storage-wizard__inline-alert"
+                >
+                  {clusterLoadError}
+                </Alert>
+              )}
               <Form className="ct-gfs-storage-wizard__section ct-gfs-storage-wizard__form-horizontal" isHorizontal>
                 <FormGroup label="IPMI 구성 준비" isRequired fieldId="gfs-ipmi-mode">
-                  <div>
+                  <div className="ct-gfs-storage-wizard__choice-grid ct-gfs-storage-wizard__choice-grid--two">
                     <Radio
                       id="gfs-ipmi-common"
                       name="gfs-ipmi-mode"
@@ -467,21 +712,6 @@ export default function GfsStorageConfigureWizardModal({
 
               {ipmiMode === "common" ? (
                 <Form className="ct-gfs-storage-wizard__section ct-gfs-storage-wizard__form-horizontal" isHorizontal>
-                  <FormGroup label="공통 사용자" isRequired fieldId="gfs-ipmi-common-user">
-                    <TextInput
-                      id="gfs-ipmi-common-user"
-                      value={ipmiCommonUser}
-                      onChange={(_event, value) => setIpmiCommonUser(String(value))}
-                    />
-                  </FormGroup>
-                  <FormGroup label="공통 비밀번호" isRequired fieldId="gfs-ipmi-common-pass">
-                    <TextInput
-                      id="gfs-ipmi-common-pass"
-                      type="password"
-                      value={ipmiCommonPass}
-                      onChange={(_event, value) => setIpmiCommonPass(String(value))}
-                    />
-                  </FormGroup>
                   {ipmiHosts.map((host, index) => (
                     <FormGroup
                       key={`gfs-ipmi-common-${host.hostName}`}
@@ -497,37 +727,55 @@ export default function GfsStorageConfigureWizardModal({
                       />
                     </FormGroup>
                   ))}
+                  <FormGroup label="공통 사용자" isRequired fieldId="gfs-ipmi-common-user">
+                    <TextInput
+                      id="gfs-ipmi-common-user"
+                      value={ipmiCommonUser}
+                      onChange={(_event, value) => setIpmiCommonUser(String(value))}
+                    />
+                  </FormGroup>
+                  <FormGroup label="공통 비밀번호" isRequired fieldId="gfs-ipmi-common-pass">
+                    <TextInput
+                      id="gfs-ipmi-common-pass"
+                      type="password"
+                      value={ipmiCommonPass}
+                      onChange={(_event, value) => setIpmiCommonPass(String(value))}
+                    />
+                  </FormGroup>
                 </Form>
               ) : (
-                <Form className="ct-gfs-storage-wizard__section ct-gfs-storage-wizard__form-horizontal" isHorizontal>
+                <Form className="ct-gfs-storage-wizard__section ct-gfs-storage-wizard__ipmi-host-list">
                   {ipmiHosts.map((host, index) => (
-                    <React.Fragment key={`gfs-ipmi-individual-${host.hostName}`}>
-                      <FormGroup label={`${host.hostName} IPMI IP`} isRequired fieldId={`gfs-ipmi-ip-${index}`}>
-                        <TextInput
-                          id={`gfs-ipmi-ip-${index}`}
-                          value={host.ip}
-                          placeholder="xxx.xxx.xxx.xxx 형식으로 입력"
-                          onChange={(_event, value) => updateIpmiHost(index, { ip: String(value) })}
-                        />
-                      </FormGroup>
-                      <FormGroup label={`${host.hostName} 사용자`} isRequired fieldId={`gfs-ipmi-user-${index}`}>
-                        <TextInput
-                          id={`gfs-ipmi-user-${index}`}
-                          value={host.username}
-                          placeholder="아이디를 입력하세요."
-                          onChange={(_event, value) => updateIpmiHost(index, { username: String(value) })}
-                        />
-                      </FormGroup>
-                      <FormGroup label={`${host.hostName} 비밀번호`} isRequired fieldId={`gfs-ipmi-pass-${index}`}>
-                        <TextInput
-                          id={`gfs-ipmi-pass-${index}`}
-                          type="password"
-                          value={host.password}
-                          placeholder="비밀번호를 입력하세요."
-                          onChange={(_event, value) => updateIpmiHost(index, { password: String(value) })}
-                        />
-                      </FormGroup>
-                    </React.Fragment>
+                    <section className="ct-gfs-storage-wizard__ipmi-host" key={`gfs-ipmi-individual-${host.hostName}`}>
+                      <h3 className="ct-gfs-storage-wizard__ipmi-host-title">{host.hostName}</h3>
+                      <div className="ct-gfs-storage-wizard__ipmi-host-fields">
+                        <FormGroup label="IPMI IP" isRequired fieldId={`gfs-ipmi-ip-${index}`}>
+                          <TextInput
+                            id={`gfs-ipmi-ip-${index}`}
+                            value={host.ip}
+                            placeholder="xxx.xxx.xxx.xxx 형식으로 입력"
+                            onChange={(_event, value) => updateIpmiHost(index, { ip: String(value) })}
+                          />
+                        </FormGroup>
+                        <FormGroup label="사용자" isRequired fieldId={`gfs-ipmi-user-${index}`}>
+                          <TextInput
+                            id={`gfs-ipmi-user-${index}`}
+                            value={host.username}
+                            placeholder="아이디를 입력하세요."
+                            onChange={(_event, value) => updateIpmiHost(index, { username: String(value) })}
+                          />
+                        </FormGroup>
+                        <FormGroup label="비밀번호" isRequired fieldId={`gfs-ipmi-pass-${index}`}>
+                          <TextInput
+                            id={`gfs-ipmi-pass-${index}`}
+                            type="password"
+                            value={host.password}
+                            placeholder="비밀번호를 입력하세요."
+                            onChange={(_event, value) => updateIpmiHost(index, { password: String(value) })}
+                          />
+                        </FormGroup>
+                      </div>
+                    </section>
                   ))}
                 </Form>
               )}
@@ -537,7 +785,7 @@ export default function GfsStorageConfigureWizardModal({
           <WizardStep
             name="설정확인"
             id="gfs-review"
-            isDisabled={externalSyncMode === "duplication" && !externalSyncCompleted}
+            isDisabled={Boolean(externalSyncAction) && !externalSyncCompleted}
           >
             <div className="ct-gfs-storage-wizard__content">
               <Content>
@@ -565,6 +813,10 @@ export default function GfsStorageConfigureWizardModal({
                         <DescriptionListGroup>
                           <DescriptionListTerm>외부 스토리지 동기화 방식</DescriptionListTerm>
                           <DescriptionListDescription>{externalSyncLabel}</DescriptionListDescription>
+                        </DescriptionListGroup>
+                        <DescriptionListGroup>
+                          <DescriptionListTerm>동기화 상태</DescriptionListTerm>
+                          <DescriptionListDescription>{externalSyncStatusText}</DescriptionListDescription>
                         </DescriptionListGroup>
                       </DescriptionList>
                     </div>
@@ -648,7 +900,7 @@ export default function GfsStorageConfigureWizardModal({
             </div>
           </WizardStep>
 
-          <WizardStep name="배포" id="gfs-deploy">
+          <WizardStep name="구성" id="gfs-deploy">
             <div className="ct-gfs-storage-wizard__content">
               <Content component="p" className="ct-gfs-storage-wizard__deploy-title">
                 GFS 스토리지를 구성 중입니다. 전체 3단계 중 {deployPhase === "done" ? "3" : "2"}단계 진행 중입니다.

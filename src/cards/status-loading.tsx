@@ -2,7 +2,7 @@ import React from "react";
 
 import { Spinner } from "@patternfly/react-core";
 
-export const STATUS_LOADING_LABEL = "상태 체크 중...";
+export const STATUS_LOADING_LABEL = "확인 중";
 export const STATUS_UNKNOWN_LABEL = "상태 확인 필요";
 
 export function StatusLoadingIcon() {
@@ -10,7 +10,7 @@ export function StatusLoadingIcon() {
         <Spinner
           isInline
           diameter="0.875em"
-          aria-label="상태 체크 중"
+          aria-label="상태 확인 중"
           className="ct-status-card__loading-spinner"
         />
     );

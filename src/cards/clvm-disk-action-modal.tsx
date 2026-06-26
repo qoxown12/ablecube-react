@@ -22,15 +22,34 @@ interface ClvmDiskActionModalProps {
 const ADDABLE_DISKS = [
   {
     id: "mpathb",
-    label: "/dev/mapper/mpathb running (mpath) 500G DELL 3600d0230000000000e13955cc3757801",
+    name: "mpathb",
+    device: "/dev/mapper/mpathb",
+    status: "running",
+    type: "mpath",
+    size: "500G",
+    vendor: "DELL",
+    wwn: "3600d0230000000000e13955cc3757801",
   },
   {
     id: "mpathc",
-    label: "/dev/mapper/mpathc running (mpath) 500G DELL 3600d0230000000000e13955cc3757802",
+    name: "mpathc",
+    device: "/dev/mapper/mpathc",
+    status: "running",
+    type: "mpath",
+    size: "500G",
+    vendor: "DELL",
+    wwn: "3600d0230000000000e13955cc3757802",
   },
   {
     id: "sdd",
-    label: "/dev/sdd running (disk) 1T SSD 0x5002538e00000001 ( Partition exists count : 1 )",
+    name: "sdd",
+    device: "/dev/sdd",
+    status: "running",
+    type: "disk",
+    size: "1T",
+    vendor: "SSD",
+    wwn: "0x5002538e00000001",
+    note: "Partition exists count : 1",
     disabled: true,
   },
 ];
@@ -109,18 +128,61 @@ export default function ClvmDiskActionModal({
         <div className="ct-clvm-disk-modal__field-label">
           CLVM 디스크 구성 대상 장치 <span aria-hidden="true">*</span>
         </div>
-        <div className="ct-clvm-disk-modal__scroll-list">
-          {ADDABLE_DISKS.length > 0 ? ADDABLE_DISKS.map((disk) => (
-            <label className="ct-clvm-disk-modal__check" key={disk.id}>
-              <input
-                type="checkbox"
-                checked={selectedAddDisks.includes(disk.id)}
-                disabled={disk.disabled}
-                onChange={() => setSelectedAddDisks((values) => toggleSelection(values, disk.id))}
-              />
-              <span>{disk.label}</span>
-            </label>
-          )) : (
+        <div className="ct-disk-table-wrap">
+          {ADDABLE_DISKS.length > 0 ? (
+            <table className="ct-disk-table">
+              <thead>
+                <tr>
+                  <th aria-label="선택" />
+                  <th>디스크 이름</th>
+                  <th>디스크 장치명</th>
+                  <th>사이즈</th>
+                  <th>유형</th>
+                  <th>WWN</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ADDABLE_DISKS.map((disk) => {
+                  const isSelected = selectedAddDisks.includes(disk.id);
+                  const toggleDisk = () => {
+                    if (!disk.disabled) {
+                      setSelectedAddDisks((values) => toggleSelection(values, disk.id));
+                    }
+                  };
+
+                  return (
+                    <tr
+                      className={`${isSelected ? "ct-disk-table__row--selected" : ""}${disk.disabled ? " ct-disk-table__row--disabled" : ""}`}
+                      key={disk.id}
+                      onClick={toggleDisk}
+                    >
+                      <td className="ct-disk-table__select">
+                        <input
+                          type="checkbox"
+                          aria-label={`${disk.name} 선택`}
+                          checked={isSelected}
+                          disabled={disk.disabled}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={toggleDisk}
+                        />
+                      </td>
+                      <td>
+                        <span className="ct-disk-table__name">{disk.name}</span>
+                        {disk.note && <span className="ct-disk-table__muted">{disk.note}</span>}
+                      </td>
+                      <td className="ct-disk-table__mono">{disk.device}</td>
+                      <td className="ct-disk-table__mono">{disk.size}</td>
+                      <td>
+                        <span className="ct-disk-table__status">{disk.status}</span>
+                        <span className="ct-disk-table__muted">{disk.type} / {disk.vendor}</span>
+                      </td>
+                      <td className="ct-disk-table__mono">{disk.wwn}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
             <Content component="p">데이터가 존재하지 않습니다.</Content>
           )}
         </div>
@@ -129,17 +191,50 @@ export default function ClvmDiskActionModal({
   );
 
   const renderDeleteBody = () => (
-    <div className="ct-clvm-disk-modal__scroll-list ct-clvm-disk-modal__mono">
-      {CLVM_DISKS.length > 0 ? CLVM_DISKS.map((disk, index) => (
-        <label className="ct-clvm-disk-modal__check" key={disk.id}>
-          <input
-            type="checkbox"
-            checked={selectedDeleteDisks.includes(disk.id)}
-            onChange={() => setSelectedDeleteDisks((values) => toggleSelection(values, disk.id))}
-          />
-          <span>{index + 1}. {disk.vgName} {disk.pvName} {disk.pvSize} {disk.wwn}</span>
-        </label>
-      )) : (
+    <div className="ct-disk-table-wrap">
+      {CLVM_DISKS.length > 0 ? (
+        <table className="ct-disk-table">
+          <thead>
+            <tr>
+              <th aria-label="선택" />
+              <th>디스크 이름</th>
+              <th>디스크 장치명</th>
+              <th>사이즈</th>
+              <th>WWN</th>
+            </tr>
+          </thead>
+          <tbody>
+            {CLVM_DISKS.map((disk) => {
+              const isSelected = selectedDeleteDisks.includes(disk.id);
+              const toggleDisk = () => {
+                setSelectedDeleteDisks((values) => toggleSelection(values, disk.id));
+              };
+
+              return (
+                <tr
+                  className={isSelected ? "ct-disk-table__row--selected" : ""}
+                  key={disk.id}
+                  onClick={toggleDisk}
+                >
+                  <td className="ct-disk-table__select">
+                    <input
+                      type="checkbox"
+                      aria-label={`${disk.vgName} 선택`}
+                      checked={isSelected}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={toggleDisk}
+                    />
+                  </td>
+                  <td><span className="ct-disk-table__name">{disk.vgName}</span></td>
+                  <td className="ct-disk-table__mono">{disk.pvName}</td>
+                  <td className="ct-disk-table__mono">{disk.pvSize}</td>
+                  <td className="ct-disk-table__mono">{disk.wwn}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
         <Content component="p">데이터가 존재하지 않습니다.</Content>
       )}
     </div>

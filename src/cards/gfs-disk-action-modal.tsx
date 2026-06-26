@@ -20,13 +20,39 @@ interface GfsDiskActionModalProps {
 }
 
 const AVAILABLE_DISKS = [
-  { id: "disk-image-001", label: "disk-image-001 /dev/mapper/mpathg 500G" },
-  { id: "disk-image-002", label: "disk-image-002 /dev/mapper/mpathh 1T" },
+  {
+    id: "disk-image-001",
+    name: "disk-image-001",
+    device: "/dev/mapper/mpathg",
+    size: "500G",
+    type: "mpath",
+  },
+  {
+    id: "disk-image-002",
+    name: "disk-image-002",
+    device: "/dev/mapper/mpathh",
+    size: "1T",
+    type: "mpath",
+  },
 ];
 
 const GFS_DISKS = [
-  { id: "gfs-data-01", mount: "/mnt/glue-gfs", pv: "/dev/mapper/mpathg", vg: "vg_gfs01", size: "500G" },
-  { id: "gfs-data-02", mount: "/mnt/glue-gfs2", pv: "/dev/mapper/mpathh", vg: "vg_gfs02", size: "1T" },
+  {
+    id: "gfs-data-01",
+    name: "gfs-data-01",
+    mount: "/mnt/glue-gfs",
+    pv: "/dev/mapper/mpathg",
+    vg: "vg_gfs01",
+    size: "500G",
+  },
+  {
+    id: "gfs-data-02",
+    name: "gfs-data-02",
+    mount: "/mnt/glue-gfs2",
+    pv: "/dev/mapper/mpathh",
+    vg: "vg_gfs02",
+    size: "1T",
+  },
 ];
 
 const ACTION_TITLE: Record<GfsDiskAction, string> = {
@@ -68,8 +94,6 @@ export default function GfsDiskActionModal({
   const isAdd = action === "add";
   const isExtend = action === "extend";
   const isExecutable = isInfo || selectedIds.length > 0;
-  const sourceList = isAdd ? AVAILABLE_DISKS : GFS_DISKS;
-
   const execute = () => {
     if (isInfo) {
       onClose();
@@ -79,18 +103,103 @@ export default function GfsDiskActionModal({
     onConfirm(action, selectedIds);
   };
 
-  const renderDiskChecks = () => (
-    <div className="ct-clvm-disk-modal__scroll-list ct-clvm-disk-modal__mono">
-      {sourceList.length > 0 ? sourceList.map((disk) => (
-        <label className="ct-clvm-disk-modal__check" key={disk.id}>
-          <input
-            type="checkbox"
-            checked={selectedIds.includes(disk.id)}
-            onChange={() => setSelectedIds((values) => toggleSelection(values, disk.id))}
-          />
-          <span>{"label" in disk ? disk.label : `${disk.mount} ${disk.pv} ${disk.vg} ${disk.size}`}</span>
-        </label>
-      )) : (
+  const renderAvailableDiskTable = () => (
+    <div className="ct-disk-table-wrap">
+      {AVAILABLE_DISKS.length > 0 ? (
+        <table className="ct-disk-table">
+          <thead>
+            <tr>
+              <th aria-label="선택" />
+              <th>디스크 이름</th>
+              <th>디스크 장치명</th>
+              <th>사이즈</th>
+              <th>유형</th>
+            </tr>
+          </thead>
+          <tbody>
+            {AVAILABLE_DISKS.map((disk) => {
+              const isSelected = selectedIds.includes(disk.id);
+              const toggleDisk = () => {
+                setSelectedIds((values) => toggleSelection(values, disk.id));
+              };
+
+              return (
+                <tr
+                  className={isSelected ? "ct-disk-table__row--selected" : ""}
+                  key={disk.id}
+                  onClick={toggleDisk}
+                >
+                  <td className="ct-disk-table__select">
+                    <input
+                      type="checkbox"
+                      aria-label={`${disk.name} 선택`}
+                      checked={isSelected}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={toggleDisk}
+                    />
+                  </td>
+                  <td><span className="ct-disk-table__name">{disk.name}</span></td>
+                  <td className="ct-disk-table__mono">{disk.device}</td>
+                  <td className="ct-disk-table__mono">{disk.size}</td>
+                  <td><span className="ct-disk-table__status">{disk.type}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
+        <Content component="p">데이터가 존재하지 않습니다.</Content>
+      )}
+    </div>
+  );
+
+  const renderGfsDiskTable = () => (
+    <div className="ct-disk-table-wrap">
+      {GFS_DISKS.length > 0 ? (
+        <table className="ct-disk-table">
+          <thead>
+            <tr>
+              <th aria-label="선택" />
+              <th>디스크 이름</th>
+              <th>마운트 경로</th>
+              <th>디스크 장치명</th>
+              <th>볼륨 그룹</th>
+              <th>사이즈</th>
+            </tr>
+          </thead>
+          <tbody>
+            {GFS_DISKS.map((disk) => {
+              const isSelected = selectedIds.includes(disk.id);
+              const toggleDisk = () => {
+                setSelectedIds((values) => toggleSelection(values, disk.id));
+              };
+
+              return (
+                <tr
+                  className={isSelected ? "ct-disk-table__row--selected" : ""}
+                  key={disk.id}
+                  onClick={toggleDisk}
+                >
+                  <td className="ct-disk-table__select">
+                    <input
+                      type="checkbox"
+                      aria-label={`${disk.name} 선택`}
+                      checked={isSelected}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={toggleDisk}
+                    />
+                  </td>
+                  <td><span className="ct-disk-table__name">{disk.name}</span></td>
+                  <td className="ct-disk-table__mono">{disk.mount}</td>
+                  <td className="ct-disk-table__mono">{disk.pv}</td>
+                  <td className="ct-disk-table__mono">{disk.vg}</td>
+                  <td className="ct-disk-table__mono">{disk.size}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
         <Content component="p">데이터가 존재하지 않습니다.</Content>
       )}
     </div>
@@ -163,7 +272,7 @@ export default function GfsDiskActionModal({
             </label>
           </div>
         )}
-        {isInfo ? renderInfo() : renderDiskChecks()}
+        {isInfo ? renderInfo() : isAdd ? renderAvailableDiskTable() : renderGfsDiskTable()}
       </ModalBody>
       <ModalFooter>
         <Button variant="primary" isDisabled={!isExecutable} onClick={execute}>

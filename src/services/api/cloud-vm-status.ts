@@ -94,10 +94,6 @@ function formatMemory(data: Record<string, unknown>): string {
   const maxMemory = formatKibToBinaryUnit(readString(data, "Max memory"));
   const usedMemory = formatKibToBinaryUnit(readString(data, "Used memory"));
 
-  if (maxMemory && usedMemory) {
-    return `${maxMemory} (사용 ${usedMemory})`;
-  }
-
   return maxMemory ?? usedMemory ?? "N/A";
 }
 

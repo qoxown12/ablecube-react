@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  Alert,
   Modal,
   Wizard,
   WizardStep,
@@ -11,17 +12,31 @@ import {
   Switch,
   TextInput,
   TextArea,
-  FileUpload,
   Button,
   Label,
   DescriptionList,
   DescriptionListGroup,
   DescriptionListTerm,
   DescriptionListDescription,
+  Spinner,
 } from "@patternfly/react-core";
-import { CheckCircleIcon, InfoCircleIcon } from "@patternfly/react-icons";
+import { CheckCircleIcon, EraserIcon, InfoCircleIcon, UploadIcon } from "@patternfly/react-icons";
+import cockpit from "cockpit";
 
 import ValidationErrorModal from "../components/common/ValidationErrorModal";
+import {
+  fetchDeployRunJobs,
+  startDeployRun,
+  type DeployRunJob,
+  type DeployRunStepResult,
+} from "../services/api/deploy-status.ts";
+import {
+  downloadSSHKeyBundle,
+  generateSSHKeyFiles,
+  uploadSSHKeyBundle,
+  type SSHKeyBundleDownload,
+} from "../services/api/ssh-key.ts";
+import { fetchCurrentHostIp, fetchCurrentHostname } from "../services/host";
 import "./cluster-config-prepare-wizard.scss";
 import {
   duplicateMessage,
@@ -31,7 +46,6 @@ import {
   isIpv4,
   optionalIpv4,
   requireClusterJsonFileName,
-  requireFileName,
   requireHostname,
   requireIpv4,
   requireValue,
@@ -40,8 +54,9 @@ import {
 type ClusterType = "ablestack-hci" | "ablestack-vm" | "ablestack-standalone" | "ablestack-hci-filesystem";
 type RadioValue = "new" | "existing";
 type HostMode = "new" | "add";
-type TimeServerType = "internal" | "external";
 type HostRole = "master" | "second" | "other";
+type DeployPhase = "idle" | "running" | "success" | "error";
+type SSHKeyPreviewStatus = "empty" | "loading" | "ready" | "error";
 
 interface ClusterHostRow {
   hostName: string;
@@ -53,9 +68,31 @@ interface ClusterHostRow {
   scvmCnIp: string;
 }
 
+interface ClusterProgressRow {
+  id: string;
+  label: string;
+  status: string;
+  message?: string;
+}
+
+interface ClusterApplyTargetResult {
+  target: string;
+  code: string;
+  message: string;
+  isFailed: boolean;
+}
+
+interface SSHKeyPreview {
+  status: SSHKeyPreviewStatus;
+  privateKey: string;
+  publicKey: string;
+  message: string;
+}
+
 interface ClusterConfigPrepareWizardModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onCompleted?: () => void;
 }
 
 const DEFAULT_HOSTS: ClusterHostRow[] = [
@@ -88,9 +125,304 @@ const DEFAULT_HOSTS: ClusterHostRow[] = [
   },
 ];
 
+const STEP_STATUS_LABELS: Record<string, string> = {
+  pending: "대기",
+  running: "진행 중",
+  succeeded: "완료",
+  failed: "실패",
+  skipped: "건너뜀",
+};
+const SSH_KEY_BUNDLE_MAGIC = [0x41, 0x53, 0x4b, 0x31];
+const SSH_KEY_ENCRYPTION_CONTEXT = "ablestack-api:ssh-key-bundle:v1";
+const SSH_KEY_BUNDLE_DEFAULT_SECRET = "ablestack-api-ssh-key-bundle-default-secret-v1";
+const CLUSTER_JSON_DOWNLOAD_PATHS = [
+  "/etc/ablestack/properties/cluster.json",
+  "/etc/ablestack/cluster.json",
+];
+const EMPTY_SSH_KEY_PREVIEW: SSHKeyPreview = {
+  status: "empty",
+  privateKey: "",
+  publicKey: "",
+  message: "SSH KEY .dat 파일을 선택하면 id_rsa와 id_rsa.pub 내용을 확인할 수 있습니다.",
+};
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function findJobStep(job: DeployRunJob | null, name: string): DeployRunStepResult | undefined {
+  return job?.steps.find((step) => step.name === name);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function outputText(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  if (value === undefined || value === null) return "";
+  return JSON.stringify(value);
+}
+
+function normalizeClusterType(value: unknown): ClusterType | null {
+  const normalized = outputText(value).toLowerCase().replace(/_/g, "-");
+
+  if (normalized.includes("filesystem")) return "ablestack-hci-filesystem";
+  if (normalized.includes("standalone")) return "ablestack-standalone";
+  if (normalized.includes("hci")) return "ablestack-hci";
+  if (normalized.includes("vm")) return "ablestack-vm";
+  return null;
+}
+
+function isTrueLike(value: unknown): boolean {
+  const normalized = outputText(value).toLowerCase();
+
+  return ["true", "1", "yes", "y", "on", "enabled", "사용"].includes(normalized);
+}
+
+function stringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(outputText).filter(Boolean);
+  const text = outputText(value);
+
+  return text ? [text] : [];
+}
+
+function decodeText(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index]);
+  }
+
+  return window.btoa(binary);
+}
+
+function binaryDownloadHref(buffer: ArrayBuffer): string {
+  return `data:application/octet-stream;base64,${arrayBufferToBase64(buffer)}`;
+}
+
+function uint32LE(view: DataView, offset: number): number {
+  return view.getUint32(offset, true);
+}
+
+function uint16LE(view: DataView, offset: number): number {
+  return view.getUint16(offset, true);
+}
+
+async function inflateZipPayload(data: Uint8Array): Promise<Uint8Array> {
+  const DecompressionStreamCtor = (globalThis as unknown as {
+    DecompressionStream?: new (format: string) => DecompressionStream;
+  }).DecompressionStream;
+
+  if (!DecompressionStreamCtor) {
+    throw new Error("현재 브라우저에서 zip 압축 미리보기를 지원하지 않습니다.");
+  }
+
+  const inflate = async (format: string) => {
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStreamCtor(format));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  };
+
+  try {
+    return await inflate("deflate-raw");
+  } catch {
+    return inflate("deflate");
+  }
+}
+
+async function extractSSHKeyZipFiles(zipBytes: Uint8Array): Promise<Record<string, string>> {
+  const view = new DataView(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+  let eocdOffset = -1;
+
+  for (let offset = zipBytes.length - 22; offset >= 0; offset -= 1) {
+    if (uint32LE(view, offset) === 0x06054b50) {
+      eocdOffset = offset;
+      break;
+    }
+  }
+
+  if (eocdOffset < 0) {
+    throw new Error("SSH KEY 파일 내부 zip 구조를 확인할 수 없습니다.");
+  }
+
+  const entries = uint16LE(view, eocdOffset + 10);
+  let centralOffset = uint32LE(view, eocdOffset + 16);
+  const files: Record<string, string> = {};
+
+  for (let index = 0; index < entries; index += 1) {
+    if (uint32LE(view, centralOffset) !== 0x02014b50) {
+      throw new Error("SSH KEY 파일 내부 zip 항목을 확인할 수 없습니다.");
+    }
+
+    const method = uint16LE(view, centralOffset + 10);
+    const compressedSize = uint32LE(view, centralOffset + 20);
+    const fileNameLength = uint16LE(view, centralOffset + 28);
+    const extraLength = uint16LE(view, centralOffset + 30);
+    const commentLength = uint16LE(view, centralOffset + 32);
+    const localOffset = uint32LE(view, centralOffset + 42);
+    const fileName = decodeText(zipBytes.slice(centralOffset + 46, centralOffset + 46 + fileNameLength));
+
+    if (fileName === "id_rsa" || fileName === "id_rsa.pub") {
+      const localFileNameLength = uint16LE(view, localOffset + 26);
+      const localExtraLength = uint16LE(view, localOffset + 28);
+      const dataOffset = localOffset + 30 + localFileNameLength + localExtraLength;
+      const compressedData = zipBytes.slice(dataOffset, dataOffset + compressedSize);
+      const plainData = method === 0
+        ? compressedData
+        : method === 8
+          ? await inflateZipPayload(compressedData)
+          : null;
+
+      if (!plainData) {
+        throw new Error(`${fileName} 압축 형식을 확인할 수 없습니다.`);
+      }
+
+      files[fileName] = decodeText(plainData);
+    }
+
+    centralOffset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return files;
+}
+
+async function parseSSHKeyBundle(buffer: ArrayBuffer): Promise<Pick<SSHKeyPreview, "privateKey" | "publicKey">> {
+  const bytes = new Uint8Array(buffer);
+
+  if (bytes.length <= SSH_KEY_BUNDLE_MAGIC.length + 12) {
+    throw new Error("SSH KEY 파일 크기가 올바르지 않습니다.");
+  }
+  if (!SSH_KEY_BUNDLE_MAGIC.every((magicByte, index) => bytes[index] === magicByte)) {
+    throw new Error("ABLESTACK SSH KEY .dat 파일 형식이 아닙니다.");
+  }
+  if (!crypto.subtle) {
+    throw new Error("현재 브라우저에서 SSH KEY 파일 복호화를 지원하지 않습니다.");
+  }
+
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(`${SSH_KEY_ENCRYPTION_CONTEXT}\0${SSH_KEY_BUNDLE_DEFAULT_SECRET}`)
+  );
+  const key = await crypto.subtle.importKey("raw", keyMaterial, "AES-GCM", false, ["decrypt"]);
+  const nonce = bytes.slice(SSH_KEY_BUNDLE_MAGIC.length, SSH_KEY_BUNDLE_MAGIC.length + 12);
+  const ciphertext = bytes.slice(SSH_KEY_BUNDLE_MAGIC.length + 12);
+  const zipPayload = await crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: nonce,
+      additionalData: encoder.encode(SSH_KEY_ENCRYPTION_CONTEXT),
+    },
+    key,
+    ciphertext
+  );
+  const files = await extractSSHKeyZipFiles(new Uint8Array(zipPayload));
+
+  return {
+    privateKey: files.id_rsa || "",
+    publicKey: files["id_rsa.pub"] || "",
+  };
+}
+
+function parseClusterConfigFile(text: string) {
+  const parsed = JSON.parse(text) as unknown;
+  const root = isRecord(parsed) ? parsed : {};
+  const clusterConfig = isRecord(root.clusterConfig)
+    ? root.clusterConfig
+    : root;
+
+  if (!isRecord(clusterConfig)) {
+    throw new Error("clusterConfig block not found");
+  }
+
+  const rootSecurity = isRecord(root.security) ? root.security : {};
+  const clusterSecurity = isRecord(clusterConfig.security) ? clusterConfig.security : {};
+  const rawHosts = Array.isArray(clusterConfig.hosts) ? clusterConfig.hosts.filter(isRecord) : [];
+  const hostRows: ClusterHostRow[] = rawHosts.map((host) => {
+    const ablecubePn = outputText(host.ablecubePn);
+
+    return {
+      hostName: outputText(host.hostname),
+      hostIp: outputText(host.ablecube),
+      storageIp: ablecubePn,
+      scvmMgmtIp: outputText(host.scvmMngt),
+      hostPnIp: ablecubePn,
+      scvmPnIp: outputText(host.scvm),
+      scvmCnIp: outputText(host.scvmCn),
+    };
+  });
+  const ccvm = isRecord(clusterConfig.ccvm) ? clusterConfig.ccvm : {};
+  const mngtNic = isRecord(clusterConfig.mngtNic) ? clusterConfig.mngtNic : {};
+  const explicitTimeServers = stringList(clusterConfig.timeServers);
+  const hostTimeServers = hostRows.map((host) => host.hostIp || host.hostName).filter(Boolean);
+
+  return {
+    clusterType: normalizeClusterType(clusterConfig.type),
+    hostRows,
+    ccvmMgmtIp: outputText(ccvm.ip),
+    mgmtCidr: outputText(mngtNic.cidr) || outputText(ccvm.cidr),
+    mgmtGateway: outputText(mngtNic.gw) || outputText(ccvm.gw),
+    mgmtDns: outputText(mngtNic.dns) || outputText(ccvm.dns),
+    externalTimeServer: outputText(clusterConfig.external_timeserver) || outputText(clusterConfig.extenal_timeserver),
+    isIscsiExclusive: isTrueLike(clusterConfig.iscsi_storage) || isTrueLike(clusterConfig.iscsiStorageExclusive),
+    timeServer1: explicitTimeServers[0] || hostTimeServers[0] || "",
+    timeServer2: explicitTimeServers[1] || hostTimeServers[1] || "",
+    internalToken: outputText(rootSecurity.internal_token) || outputText(clusterSecurity.internal_token),
+  };
+}
+
+function clusterApplyTargetResults(job: DeployRunJob | null): ClusterApplyTargetResult[] {
+  const output = findJobStep(job, "cluster_apply")?.output;
+
+  if (!isRecord(output) || !Array.isArray(output.results)) return [];
+
+  return output.results
+    .filter(isRecord)
+    .map((result) => {
+      const code = outputText(result.code);
+
+      return {
+        target: outputText(result.target) || "unknown",
+        code: code || "-",
+        message: outputText(result.message) || "결과 메시지가 없습니다.",
+        isFailed: code !== "200",
+      };
+    });
+}
+
+function clusterStepStatus(job: DeployRunJob | null, phase: DeployPhase): string {
+  const step = findJobStep(job, "cluster_apply");
+
+  if (step?.status) return step.status;
+  if (phase === "running" && job) return "running";
+  if (phase === "error" && job) return "failed";
+  return "pending";
+}
+
+function progressLabel(status: string) {
+  if (status === "succeeded") return <Label color="green">완료</Label>;
+  if (status === "failed") return <Label color="red">실패</Label>;
+  if (status === "skipped") return <Label color="cyan">건너뜀</Label>;
+  if (status === "running") {
+    return (
+      <Label color="blue" icon={<Spinner size="sm" aria-label="진행 중" />}>
+        진행 중
+      </Label>
+    );
+  }
+
+  return <Label color="grey">{STEP_STATUS_LABELS[status] ?? "대기"}</Label>;
+}
+
 export default function ClusterConfigPrepareWizardModal({
   isOpen,
   onClose,
+  onCompleted,
 }: ClusterConfigPrepareWizardModalProps) {
   const [clusterType, setClusterType] = React.useState<ClusterType>("ablestack-hci");
   const [sshKeyMode, setSshKeyMode] = React.useState<RadioValue>("new");
@@ -100,20 +432,19 @@ export default function ClusterConfigPrepareWizardModal({
   const [hostCount, setHostCount] = React.useState(3);
   const [isIscsiExclusive, setIsIscsiExclusive] = React.useState(false);
   const [currentHostname, setCurrentHostname] = React.useState("");
+  const [currentHostIp, setCurrentHostIp] = React.useState("");
   const [ccvmMgmtIp, setCcvmMgmtIp] = React.useState("");
   const [mgmtCidr, setMgmtCidr] = React.useState("");
   const [mgmtGateway, setMgmtGateway] = React.useState("");
   const [mgmtDns, setMgmtDns] = React.useState("");
-  const [pcsPnIp1, setPcsPnIp1] = React.useState("");
-  const [pcsPnIp2, setPcsPnIp2] = React.useState("");
-  const [pcsPnIp3, setPcsPnIp3] = React.useState("");
+  const [securityInternalToken, setSecurityInternalToken] = React.useState("");
   const [hostsFileText, setHostsFileText] = React.useState("");
-  const [sshPrivateText, setSshPrivateText] = React.useState("");
-  const [sshPublicText, setSshPublicText] = React.useState("");
-  const [sshPrivateFilename, setSshPrivateFilename] = React.useState("");
-  const [sshPublicFilename, setSshPublicFilename] = React.useState("");
+  const [sshKeyText, setSshKeyText] = React.useState("");
+  const [sshKeyFilename, setSshKeyFilename] = React.useState("");
+  const [sshKeyPreview, setSshKeyPreview] = React.useState<SSHKeyPreview>(EMPTY_SSH_KEY_PREVIEW);
+  const [sshKeyBundleHref, setSshKeyBundleHref] = React.useState("");
+  const [sshKeyBundleBuffer, setSshKeyBundleBuffer] = React.useState<ArrayBuffer | null>(null);
   const [hostsFilename, setHostsFilename] = React.useState("");
-  const [timeServerType, setTimeServerType] = React.useState<TimeServerType>("internal");
   const [hostRole, setHostRole] = React.useState<HostRole>("master");
   const [externalTimeServer, setExternalTimeServer] = React.useState("");
   const [timeServer1, setTimeServer1] = React.useState("");
@@ -128,6 +459,26 @@ export default function ClusterConfigPrepareWizardModal({
     timeServer: true,
   });
   const [validationMessage, setValidationMessage] = React.useState("");
+  const [deployPhase, setDeployPhase] = React.useState<DeployPhase>("idle");
+  const [deployMessage, setDeployMessage] = React.useState("");
+  const [deployJob, setDeployJob] = React.useState<DeployRunJob | null>(null);
+  const [deployJobId, setDeployJobId] = React.useState("");
+  const [clusterJsonDownloadHref, setClusterJsonDownloadHref] = React.useState("");
+  const [clusterJsonDownloadError, setClusterJsonDownloadError] = React.useState("");
+  const sshKeyFileInputRef = React.useRef<HTMLInputElement>(null);
+  const clusterConfigFileInputRef = React.useRef<HTMLInputElement>(null);
+  const deployNextStepRef = React.useRef<(() => void) | null>(null);
+
+  const applyCurrentHostname = React.useCallback((hostname: string) => {
+    if (!hostname) return;
+    setCurrentHostname(hostname);
+  }, []);
+
+  const applyCurrentHostIp = React.useCallback((hostIp: string) => {
+    if (!hostIp) return;
+    setCurrentHostIp(hostIp);
+    setTimeServer1((prev) => prev || hostIp);
+  }, []);
 
   const resetState = React.useCallback(() => {
     setClusterType("ablestack-hci");
@@ -138,20 +489,19 @@ export default function ClusterConfigPrepareWizardModal({
     setHostCount(3);
     setIsIscsiExclusive(false);
     setCurrentHostname("");
+    setCurrentHostIp("");
     setCcvmMgmtIp("");
     setMgmtCidr("");
     setMgmtGateway("");
     setMgmtDns("");
-    setPcsPnIp1("");
-    setPcsPnIp2("");
-    setPcsPnIp3("");
+    setSecurityInternalToken("");
     setHostsFileText("");
-    setSshPrivateText("");
-    setSshPublicText("");
-    setSshPrivateFilename("");
-    setSshPublicFilename("");
+    setSshKeyText("");
+    setSshKeyFilename("");
+    setSshKeyPreview(EMPTY_SSH_KEY_PREVIEW);
+    setSshKeyBundleHref("");
+    setSshKeyBundleBuffer(null);
     setHostsFilename("");
-    setTimeServerType("internal");
     setHostRole("master");
     setExternalTimeServer("");
     setTimeServer1("");
@@ -160,7 +510,19 @@ export default function ClusterConfigPrepareWizardModal({
     setIpmiUser("");
     setIpmiPassword("");
     setValidationMessage("");
-  }, []);
+    setDeployPhase("idle");
+    setDeployMessage("");
+    setDeployJob(null);
+    setDeployJobId("");
+    setClusterJsonDownloadHref("");
+    setClusterJsonDownloadError("");
+    fetchCurrentHostname()
+      .then(applyCurrentHostname)
+      .catch(() => undefined);
+    fetchCurrentHostIp()
+      .then(applyCurrentHostIp)
+      .catch(() => undefined);
+  }, [applyCurrentHostIp, applyCurrentHostname]);
 
   const handleClose = () => {
     onClose();
@@ -168,6 +530,19 @@ export default function ClusterConfigPrepareWizardModal({
   };
 
   React.useEffect(() => {
+    if (!isOpen) return;
+
+    fetchCurrentHostname()
+      .then(applyCurrentHostname)
+      .catch(() => undefined);
+    fetchCurrentHostIp()
+      .then(applyCurrentHostIp)
+      .catch(() => undefined);
+  }, [applyCurrentHostIp, applyCurrentHostname, isOpen]);
+
+  React.useEffect(() => {
+    if (hostsFileMode === "existing" && hostsFileText.trim()) return;
+
     if (clusterType === "ablestack-standalone") {
       setClusterHostMode("new");
       setHostsFileMode("new");
@@ -183,7 +558,7 @@ export default function ClusterConfigPrepareWizardModal({
 
     setIsIscsiExclusive(false);
     updateHostCount(Math.max(3, hostCount));
-  // hostCount 변경까지 의존성에 포함하면 사용자가 +/- 조작 시 다시 보정되어 불편해지므로 clusterType 변화에만 반응합니다.
+  // hostCount/hostsFileMode 변경까지 의존성에 포함하면 사용자가 +/- 조작 시 다시 보정되어 불편해지므로 clusterType 변화에만 반응합니다.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clusterType]);
 
@@ -214,14 +589,131 @@ export default function ClusterConfigPrepareWizardModal({
     )));
   };
 
-  const readTextFile = (
-    file: File,
-    setFilename: (filename: string) => void,
-    setText: (text: string) => void
-  ) => {
-    setFilename(file.name);
+  const applySSHKeyPreview = React.useCallback((privateKey: string, publicKey: string) => {
+    setSshKeyText([
+      "----- id_rsa -----",
+      privateKey,
+      "----- id_rsa.pub -----",
+      publicKey,
+    ].join("\n"));
+    setSshKeyPreview({
+      status: privateKey && publicKey ? "ready" : "error",
+      privateKey,
+      publicKey,
+      message: privateKey && publicKey
+        ? "id_rsa와 id_rsa.pub 내용을 확인했습니다."
+        : "SSH KEY 파일 안에서 id_rsa 또는 id_rsa.pub을 찾을 수 없습니다.",
+    });
+  }, []);
+
+  const clearSSHKeyFile = React.useCallback(() => {
+    setSshKeyFilename("");
+    setSshKeyText("");
+    setSshKeyBundleHref("");
+    setSshKeyBundleBuffer(null);
+    setSshKeyPreview(EMPTY_SSH_KEY_PREVIEW);
+  }, []);
+
+  const clearClusterConfigFile = React.useCallback(() => {
+    const defaultCount = clusterType === "ablestack-hci" || clusterType === "ablestack-hci-filesystem" ? 3 : 1;
+
+    setHostsFilename("");
+    setHostsFileText("");
+    setHosts(DEFAULT_HOSTS.slice(0, defaultCount));
+    setHostCount(defaultCount);
+    setCcvmMgmtIp("");
+    setMgmtCidr("");
+    setMgmtGateway("");
+    setMgmtDns("");
+    setExternalTimeServer("");
+    setTimeServer1(currentHostIp);
+    setTimeServer2("");
+    setIsIscsiExclusive(false);
+    setSecurityInternalToken("");
+    setValidationMessage("");
+  }, [clusterType, currentHostIp]);
+
+  const readSSHKeyFile = (file: File) => {
+    setSshKeyFilename(file.name);
+    setSshKeyText("");
+    setSshKeyBundleHref("");
+    setSshKeyBundleBuffer(null);
+    setSshKeyPreview({
+      ...EMPTY_SSH_KEY_PREVIEW,
+      status: "loading",
+      message: "SSH KEY 파일을 확인하고 있습니다.",
+    });
+
     const reader = new FileReader();
-    reader.onload = () => setText(typeof reader.result === "string" ? reader.result : "");
+    reader.onload = () => {
+      const buffer = reader.result instanceof ArrayBuffer ? reader.result : null;
+
+      if (!buffer) {
+        setSshKeyPreview({
+          ...EMPTY_SSH_KEY_PREVIEW,
+          status: "error",
+          message: "SSH KEY 파일을 읽을 수 없습니다.",
+        });
+        return;
+      }
+
+      setSshKeyBundleHref(binaryDownloadHref(buffer));
+      setSshKeyBundleBuffer(buffer);
+      parseSSHKeyBundle(buffer)
+        .then(({ privateKey, publicKey }) => applySSHKeyPreview(privateKey, publicKey))
+        .catch((error) => {
+          setSshKeyPreview({
+            ...EMPTY_SSH_KEY_PREVIEW,
+            status: "error",
+            message: `SSH KEY 파일 미리보기를 확인할 수 없습니다. ${errorMessage(error)}`,
+          });
+        });
+    };
+    reader.onerror = () => {
+      setSshKeyPreview({
+        ...EMPTY_SSH_KEY_PREVIEW,
+        status: "error",
+        message: "SSH KEY 파일을 읽을 수 없습니다.",
+      });
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const applyClusterConfigFileText = React.useCallback((text: string) => {
+    try {
+      const fileConfig = parseClusterConfigFile(text);
+
+      if (fileConfig.clusterType) {
+        setClusterType(fileConfig.clusterType);
+      }
+      if (fileConfig.hostRows.length > 0) {
+        setHosts(fileConfig.hostRows);
+        setHostCount(fileConfig.hostRows.length);
+      }
+      setCcvmMgmtIp(fileConfig.ccvmMgmtIp);
+      setMgmtCidr(fileConfig.mgmtCidr);
+      setMgmtGateway(fileConfig.mgmtGateway);
+      setMgmtDns(fileConfig.mgmtDns);
+      setIsIscsiExclusive(fileConfig.isIscsiExclusive);
+      setExternalTimeServer(fileConfig.externalTimeServer);
+      setTimeServer1(fileConfig.timeServer1 || currentHostIp);
+      setTimeServer2(fileConfig.timeServer2);
+      setSecurityInternalToken(fileConfig.internalToken || "");
+      setValidationMessage("");
+    } catch {
+      setValidationMessage("클러스터 구성 파일을 읽을 수 없습니다. cluster.json 형식을 확인해주세요.");
+    }
+  }, [currentHostIp]);
+
+  const readClusterConfigFile = (file: File) => {
+    setHostsFilename(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+
+      setHostsFileText(text);
+      applyClusterConfigFileText(text);
+    };
     reader.readAsText(file);
   };
 
@@ -249,6 +741,141 @@ export default function ClusterConfigPrepareWizardModal({
     </button>
   );
 
+  const renderSSHKeyPreview = (compact = false) => {
+    const isReady = sshKeyPreview.status === "ready";
+    const statusLabel = sshKeyPreview.status === "loading"
+      ? <Label color="blue">확인 중</Label>
+      : isReady
+        ? <Label color="green">확인됨</Label>
+        : sshKeyPreview.status === "error"
+          ? <Label color="red">확인 필요</Label>
+          : <Label color="grey">대기</Label>;
+
+    return (
+      <div className="ct-cluster-config-wizard__ssh-preview">
+        <div className="ct-cluster-config-wizard__ssh-preview-summary">
+          <span>{sshKeyPreview.message}</span>
+          {statusLabel}
+        </div>
+        <div className="ct-cluster-config-wizard__ssh-preview-grid">
+          <div className="ct-cluster-config-wizard__ssh-preview-card">
+            <div className="ct-cluster-config-wizard__ssh-preview-title">
+              <strong>id_rsa</strong>
+              <Label color={sshKeyPreview.privateKey ? "green" : "orange"}>
+                {sshKeyPreview.privateKey ? "포함" : "미확인"}
+              </Label>
+            </div>
+            <TextArea
+              aria-label="id_rsa 내용"
+              readOnly
+              value={sshKeyPreview.privateKey || (sshKeyMode === "new" ? "신규 생성 시 API가 id_rsa를 생성합니다." : "id_rsa 내용을 확인할 수 없습니다.")}
+              rows={compact ? 4 : 6}
+              className="ct-cluster-config-wizard__review-textarea"
+            />
+          </div>
+          <div className="ct-cluster-config-wizard__ssh-preview-card">
+            <div className="ct-cluster-config-wizard__ssh-preview-title">
+              <strong>id_rsa.pub</strong>
+              <Label color={sshKeyPreview.publicKey ? "green" : "orange"}>
+                {sshKeyPreview.publicKey ? "포함" : "미확인"}
+              </Label>
+            </div>
+            <TextArea
+              aria-label="id_rsa.pub 내용"
+              readOnly
+              value={sshKeyPreview.publicKey || (sshKeyMode === "new" ? "신규 생성 시 API가 id_rsa.pub을 생성합니다." : "id_rsa.pub 내용을 확인할 수 없습니다.")}
+              rows={compact ? 3 : 4}
+              className="ct-cluster-config-wizard__review-textarea"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFileAttachControl = ({
+    id,
+    inputRef,
+    filename,
+    placeholder,
+    accept,
+    isDisabled = false,
+    onFileSelect,
+    onClear,
+  }: {
+    id: string;
+    inputRef: React.RefObject<HTMLInputElement | null>;
+    filename: string;
+    placeholder: string;
+    accept?: string;
+    isDisabled?: boolean;
+    onFileSelect: (file: File) => void;
+    onClear: () => void;
+  }) => {
+    const hasFile = Boolean(filename);
+    const openFileDialog = () => {
+      if (!isDisabled) {
+        inputRef.current?.click();
+      }
+    };
+
+    return (
+      <div
+        className={[
+          "ct-file-attach",
+          hasFile ? "ct-file-attach--selected" : "",
+          isDisabled ? "ct-file-attach--disabled" : "",
+        ].filter(Boolean).join(" ")}
+      >
+        <input
+          ref={inputRef}
+          id={id}
+          className="ct-file-attach__input"
+          type="file"
+          accept={accept}
+          disabled={isDisabled}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) {
+              onFileSelect(file);
+            }
+            event.currentTarget.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="ct-file-attach__surface"
+          disabled={isDisabled}
+          onClick={openFileDialog}
+          aria-label={`${placeholder} 파일 첨부`}
+        >
+          <span className="ct-file-attach__icon">
+            <UploadIcon aria-hidden="true" />
+          </span>
+          <span className="ct-file-attach__copy">
+            <strong>{filename || placeholder}</strong>
+            <small>
+              {filename
+                ? "선택된 파일입니다. 다시 누르면 다른 파일을 첨부합니다."
+                : "영역을 클릭해서 파일을 첨부하세요."}
+            </small>
+          </span>
+          <span className="ct-file-attach__action">파일 첨부</span>
+        </button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="ct-file-attach__clear"
+          icon={<EraserIcon aria-hidden="true" />}
+          isDisabled={isDisabled || !hasFile}
+          onClick={onClear}
+        >
+          초기화
+        </Button>
+      </div>
+    );
+  };
+
   const clusterTypeLabel =
     clusterType === "ablestack-hci"
       ? "ABLESTACK-HCI"
@@ -260,7 +887,6 @@ export default function ClusterConfigPrepareWizardModal({
 
   const sshKeyModeLabel = sshKeyMode === "new" ? "신규 생성" : "기존 파일 사용";
   const hostsFileModeLabel = hostsFileMode === "new" ? "신규 생성" : "기존 파일 사용";
-  const timeServerTypeLabel = timeServerType === "internal" ? "로컬 시간서버" : "외부 시간서버";
   const hostRoleLabel =
     hostRole === "master" ? "Master Server" : hostRole === "second" ? "Second Server" : "Other Server";
   const isVmLikeCluster = clusterType === "ablestack-vm" || clusterType === "ablestack-standalone";
@@ -268,6 +894,37 @@ export default function ClusterConfigPrepareWizardModal({
   const isVmAddHost = clusterType === "ablestack-vm" && clusterHostMode === "add";
   const canUseAddHost = !isStandalone;
   const visibleHosts = hosts.slice(0, hostCount);
+  const applyTargetResults = clusterApplyTargetResults(deployJob);
+
+  const timeServerCandidatesFromExistingClusterJson = React.useCallback((): string[] => {
+    if (!hostsFileText.trim()) return [];
+
+    try {
+      const parsed = JSON.parse(hostsFileText) as unknown;
+      const clusterConfig = isRecord(parsed) ? parsed.clusterConfig : null;
+      const clusterHosts = isRecord(clusterConfig) && Array.isArray(clusterConfig.hosts)
+        ? clusterConfig.hosts
+        : [];
+
+      return clusterHosts
+        .filter(isRecord)
+        .map((host) => outputText(host.ablecube) || outputText(host.hostIp) || outputText(host.hostname))
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }, [hostsFileText]);
+
+  const applyTimeServersFromClusterHosts = React.useCallback(() => {
+    const candidates = hostsFileMode === "existing"
+      ? timeServerCandidatesFromExistingClusterJson()
+      : visibleHosts
+        .map((host) => host.hostIp.trim() || host.hostName.trim())
+        .filter(Boolean);
+
+    setTimeServer1(candidates[0] || currentHostIp);
+    setTimeServer2(candidates[1] || "");
+  }, [currentHostIp, hostsFileMode, timeServerCandidatesFromExistingClusterJson, visibleHosts]);
 
   const buildHostsPreview = () => {
     if (hostsFileText.trim()) return hostsFileText;
@@ -294,60 +951,87 @@ export default function ClusterConfigPrepareWizardModal({
     return lines.join("\n");
   };
 
-  const buildClusterJsonPreview = () => JSON.stringify({
-    clusterConfig: {
-      type: clusterType,
-      hostType: clusterHostMode,
-      iscsiStorageExclusive: clusterType === "ablestack-vm" ? isIscsiExclusive : false,
-      ccvm: isVmAddHost ? undefined : { ip: ccvmMgmtIp },
-      mngtNic: isVmAddHost ? undefined : {
-        cidr: mgmtCidr,
-        gw: mgmtGateway,
-        dns: mgmtDns,
-      },
-      pcsCluster: isVmLikeCluster ? undefined : {
-        hostname1: pcsPnIp1,
-        hostname2: pcsPnIp2,
-        hostname3: pcsPnIp3,
-      },
-      hosts: visibleHosts.map((host, index) => ({
-        index: String(index + 1),
-        hostname: host.hostName,
-        ablecube: host.hostIp,
-        ...(clusterType === "ablestack-vm" && isIscsiExclusive ? { ablecubePn: host.storageIp } : {}),
-        ...(!isVmLikeCluster ? {
-          scvmMngt: host.scvmMgmtIp,
-          ablecubePn: host.hostPnIp,
-          scvm: host.scvmPnIp,
-          scvmCn: host.scvmCnIp,
+  const buildClusterJsonPreview = () => {
+    const internalToken = securityInternalToken.trim();
+
+    return JSON.stringify({
+      clusterConfig: {
+        type: clusterType,
+        hostType: clusterHostMode,
+        iscsiStorageExclusive: clusterType === "ablestack-vm" ? isIscsiExclusive : false,
+        ccvm: isVmAddHost ? undefined : { ip: ccvmMgmtIp },
+        mngtNic: isVmAddHost ? undefined : {
+          cidr: mgmtCidr,
+          gw: mgmtGateway,
+          dns: mgmtDns,
+        },
+        pcsCluster: isVmLikeCluster ? undefined : {
+          hosts: visibleHosts.map((host) => host.hostPnIp).filter(Boolean),
+        },
+        hosts: visibleHosts.map((host, index) => ({
+          index: String(index + 1),
+          hostname: host.hostName,
+          ablecube: host.hostIp,
+          ...(clusterType === "ablestack-vm" && isIscsiExclusive ? { ablecubePn: host.storageIp } : {}),
+          ...(!isVmLikeCluster ? {
+            scvmMngt: host.scvmMgmtIp,
+            ablecubePn: host.hostPnIp,
+            scvm: host.scvmPnIp,
+            scvmCn: host.scvmCnIp,
+          } : {}),
+        })),
+        external_timeserver: externalTimeServer || timeServer1,
+        timeServers: [timeServer1, timeServer2].filter(Boolean),
+        ...(isVmAddHost ? {
+          ipmi: {
+            ip: ipmiIp,
+            port: "623",
+            user: ipmiUser,
+          },
         } : {}),
-      })),
-      extenal_timeserver: externalTimeServer,
-      timeServers: [timeServer1, timeServer2].filter(Boolean),
-      ...(isVmAddHost ? {
-        ipmi: {
-          ip: ipmiIp,
-          port: "623",
-          user: ipmiUser,
+      },
+      ...(internalToken ? {
+        security: {
+          internal_token: internalToken,
         },
       } : {}),
-    },
-  }, null, 2);
+    }, null, 2);
+  };
 
   const downloadHref = (content: string) => `data:attachment/text;charset=utf-8,${encodeURIComponent(content)}`;
 
+  const refreshClusterJsonDownloadHref = React.useCallback(async () => {
+    let lastError = "";
+
+    for (const path of CLUSTER_JSON_DOWNLOAD_PATHS) {
+      try {
+        const content = await cockpit.file(path).read();
+
+        if (content) {
+          setClusterJsonDownloadHref(downloadHref(content));
+          setClusterJsonDownloadError("");
+          return;
+        }
+        lastError = `${path} 파일이 비어 있습니다.`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    setClusterJsonDownloadHref("");
+    setClusterJsonDownloadError(lastError || "저장된 cluster.json 파일을 읽을 수 없습니다.");
+  }, []);
+
   const validateClusterConfigPrepare = () => {
     if (sshKeyMode === "existing") {
-      const privateKeyMessage = firstError(
-        requireFileName(sshPrivateFilename, "id_rsa", "'id_rsa'으로 된 개인 키 파일만 업로드할 수 있습니다."),
-        requireValue(sshPrivateText, "SSH 개인 키 파일 정보를 확인해 주세요.")
+      const keyFileMessage = firstError(
+        requireValue(sshKeyFilename, "SSH KEY 파일을 선택해주세요."),
+        sshKeyFilename.trim().toLowerCase().endsWith(".dat")
+          ? ""
+          : "'*.dat' 형식의 SSH KEY 파일만 업로드할 수 있습니다.",
+        sshKeyBundleBuffer ? "" : "SSH KEY 파일을 다시 선택해주세요."
       );
-      if (privateKeyMessage) return privateKeyMessage;
-      const publicKeyMessage = firstError(
-        requireFileName(sshPublicFilename, "id_rsa.pub", "'id_rsa.pub'으로 된 공개 키 파일만 업로드할 수 있습니다."),
-        requireValue(sshPublicText, "SSH 공개 키 파일 정보를 확인해 주세요.")
-      );
-      if (publicKeyMessage) return publicKeyMessage;
+      if (keyFileMessage) return keyFileMessage;
     }
 
     if (hostsFileMode === "existing") {
@@ -394,18 +1078,6 @@ export default function ClusterConfigPrepareWizardModal({
       if (dnsMessage) return dnsMessage;
     }
 
-    if (!isVmLikeCluster) {
-      const pcsMessages = [
-        requireIpv4(pcsPnIp1, "PCS 호스트1 PN IP"),
-        requireIpv4(pcsPnIp2, "PCS 호스트2 PN IP"),
-        requireIpv4(pcsPnIp3, "PCS 호스트3 PN IP"),
-      ];
-      const pcsMessage = pcsMessages.find(Boolean);
-      if (pcsMessage) return pcsMessage;
-      const duplicatePcsMessage = duplicateMessage([pcsPnIp1, pcsPnIp2, pcsPnIp3], "중복된 PCS 호스트 PN IP가 존재합니다.");
-      if (duplicatePcsMessage) return duplicatePcsMessage;
-    }
-
     if (isVmAddHost) {
       const ipmiMessage = firstError(
         requireIpv4(ipmiIp, "IPMI IP"),
@@ -415,14 +1087,10 @@ export default function ClusterConfigPrepareWizardModal({
       if (ipmiMessage) return ipmiMessage;
     }
 
-    if (timeServerType === "external") {
-      if (!externalTimeServer.trim()) return "외부 시간서버를 입력해주세요.";
-      if (!isHostAddress(externalTimeServer)) return "외부 시간서버 형식을 확인해주세요.";
-    } else {
-      if (!timeServer1.trim()) return "시간 서버 1번 IP 정보를 확인해 주세요.";
-      if (!isHostAddress(timeServer1)) return "시간 서버 1번 IP 정보를 확인해 주세요.";
-      if (timeServer2.trim() && !isHostAddress(timeServer2)) return "시간 서버 2번 IP 정보를 확인해 주세요.";
-    }
+    if (externalTimeServer.trim() && !isHostAddress(externalTimeServer)) return "외부 시간서버 형식을 확인해주세요.";
+    if (!timeServer1.trim()) return "시간 서버 1번 IP 정보를 확인해 주세요.";
+    if (!isHostAddress(timeServer1)) return "시간 서버 1번 IP 정보를 확인해 주세요.";
+    if (timeServer2.trim() && !isHostAddress(timeServer2)) return "시간 서버 2번 IP 정보를 확인해 주세요.";
 
     if (hostsFileMode === "new") {
       const profileIps = visibleHosts.flatMap((row) => [
@@ -440,12 +1108,307 @@ export default function ClusterConfigPrepareWizardModal({
     return "";
   };
 
+  const buildClusterApplyPayload = () => {
+    const internalToken = securityInternalToken.trim();
+    const hostsPayload = visibleHosts.map((host, index) => ({
+      index: String(index + 1),
+      hostname: host.hostName.trim(),
+      ablecube: host.hostIp.trim(),
+      ...(clusterType === "ablestack-vm" && isIscsiExclusive ? { ablecubePn: host.storageIp.trim() } : {}),
+      ...(!isVmLikeCluster ? {
+        scvmMngt: host.scvmMgmtIp.trim(),
+        ablecubePn: host.hostPnIp.trim(),
+        scvm: host.scvmPnIp.trim(),
+        scvmCn: host.scvmCnIp.trim(),
+      } : {}),
+    }));
+    const pcsClusterList = isStandalone
+      ? []
+      : isVmLikeCluster
+        ? visibleHosts.map((host) => host.hostIp.trim()).filter(Boolean)
+        : visibleHosts.map((host) => host.hostPnIp.trim()).filter(Boolean);
+
+    return {
+      mode: "partial",
+      only: ["cluster_apply"],
+      update_system_profile: true,
+      cluster: {
+        action: "insert",
+        option: "local",
+        type: clusterType,
+        ...(!isVmAddHost ? {
+          ccvm: { ip: ccvmMgmtIp.trim() },
+          mngtNic: {
+            cidr: mgmtCidr.trim(),
+            gw: mgmtGateway.trim(),
+            dns: mgmtDns.trim(),
+          },
+        } : {}),
+        external_timeserver: externalTimeServer.trim() || timeServer1.trim(),
+        iscsi_storage: String(clusterType === "ablestack-vm" && isIscsiExclusive),
+        ...(pcsClusterList.length > 0 ? { pcs_cluster_list: pcsClusterList } : {}),
+        hosts: hostsPayload,
+        ...(internalToken ? {
+          security: {
+            internal_token: internalToken,
+          },
+        } : {}),
+        ...(isVmAddHost ? {
+          new_hostname: visibleHosts[0]?.hostName.trim() ?? "",
+        } : {}),
+      },
+    };
+  };
+
+  const progressRows = (): ClusterProgressRow[] => {
+    const clusterApply = findJobStep(deployJob, "cluster_apply");
+    const clusterApplySuccessMessage = isVmAddHost
+      ? "클러스터 구성 파일 및 Hosts 파일 적용과 PCS 호스트 추가 설정이 완료되었습니다."
+      : "클러스터 구성 파일 및 Hosts 파일 적용이 완료되었습니다.";
+    const clusterApplyMessage = (() => {
+      const message = clusterApply?.message?.trim() ?? "";
+      const normalized = message.toLowerCase();
+
+      if (clusterStepStatus(deployJob, deployPhase) === "succeeded" && (!message || normalized === "ok" || normalized === "apply success" || normalized === "success")) {
+        return clusterApplySuccessMessage;
+      }
+
+      return message || "cluster_apply API 실행";
+    })();
+    const jobCreatedStatus = deployJob
+      ? "succeeded"
+      : deployPhase === "error"
+        ? "failed"
+        : deployPhase === "running"
+          ? "running"
+          : "pending";
+    const applyStatus = clusterStepStatus(deployJob, deployPhase);
+    const verifyStatus = deployPhase === "success"
+      ? "succeeded"
+      : deployPhase === "error" && applyStatus !== "failed"
+        ? "failed"
+        : applyStatus === "succeeded" && deployPhase === "running"
+          ? "running"
+          : "pending";
+
+    return [
+      {
+        id: "job",
+        label: "배포 Job 생성",
+        status: jobCreatedStatus,
+        message: deployJob?.jobId ? `Job ID ${deployJob.jobId}` : "API 실행 준비",
+      },
+      {
+        id: "cluster_apply",
+        label: isVmAddHost ? "Cluster Config 및 Hosts 파일 생성 및 PCS 호스트 추가 설정" : "Cluster Config 및 Hosts 파일 생성",
+        status: applyStatus,
+        message: clusterApplyMessage,
+      },
+      {
+        id: "verify",
+        label: "시간서버 설정 적용 및 구성 결과 확인",
+        status: verifyStatus,
+        message: deployPhase === "success" ? "클러스터 구성 준비가 완료되었습니다." : "Job 결과를 확인합니다.",
+      },
+    ];
+  };
+
+  const formatApplyTarget = (target: string) => {
+    const normalized = target.trim().toLowerCase();
+    const isLocal = normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+
+    if (!isLocal) return target;
+
+    const hostname = currentHostname.trim();
+    const hostIp = currentHostIp.trim();
+
+    if (hostname && hostIp) return `${hostname} (${hostIp})`;
+    return hostname || hostIp || "현재 호스트";
+  };
+
+  const formatApplyResultMessage = (result: ClusterApplyTargetResult) => {
+    if (result.isFailed) return result.message;
+
+    const message = result.message.trim();
+    const normalized = message.toLowerCase();
+
+    if (!message || normalized === "ok" || normalized === "apply success" || normalized === "success") {
+      return isVmAddHost
+        ? "클러스터 구성 파일 및 Hosts 파일 적용과 PCS 호스트 추가 설정이 완료되었습니다."
+        : "클러스터 구성 파일 및 Hosts 파일 적용이 완료되었습니다.";
+    }
+
+    return result.message;
+  };
+
+  const ensureNewSSHKeyBundle = async () => {
+    if (sshKeyMode !== "new") return;
+
+    setDeployMessage("SSH KEY 파일을 신규 생성하고 있습니다.");
+    setSshKeyPreview({
+      ...EMPTY_SSH_KEY_PREVIEW,
+      status: "loading",
+      message: "SSH KEY 파일을 신규 생성하고 있습니다.",
+    });
+
+    await generateSSHKeyFiles();
+
+    setDeployMessage("생성된 SSH KEY 파일을 다운로드하고 있습니다.");
+    const bundle: SSHKeyBundleDownload = await downloadSSHKeyBundle();
+    setSshKeyFilename("ssh-key.dat");
+    setSshKeyBundleHref(bundle.href);
+    setSshKeyBundleBuffer(bundle.buffer);
+
+    if (bundle.privateKey || bundle.publicKey) {
+      applySSHKeyPreview(bundle.privateKey || "", bundle.publicKey || "");
+      return;
+    }
+
+    if (bundle.buffer) {
+      const { privateKey, publicKey } = await parseSSHKeyBundle(bundle.buffer);
+      applySSHKeyPreview(privateKey, publicKey);
+      return;
+    }
+
+    setSshKeyPreview({
+      ...EMPTY_SSH_KEY_PREVIEW,
+      status: "error",
+      message: "생성된 SSH KEY 파일 내용을 확인할 수 없습니다.",
+    });
+  };
+
+  const ensureExistingSSHKeyUploaded = async () => {
+    if (sshKeyMode !== "existing") return;
+    if (!sshKeyBundleBuffer) {
+      throw new Error("등록할 SSH KEY 파일을 다시 선택해주세요.");
+    }
+
+    setDeployMessage("선택한 SSH KEY 파일을 현재 호스트에 등록하고 있습니다.");
+    await uploadSSHKeyBundle(sshKeyBundleBuffer, sshKeyFilename || "ssh-key.dat");
+    setSshKeyPreview((prev) => ({
+      ...prev,
+      message: prev.status === "ready"
+        ? "id_rsa와 id_rsa.pub 내용을 확인했고 현재 호스트에 등록했습니다."
+        : "선택한 SSH KEY 파일을 현재 호스트에 등록했습니다.",
+    }));
+  };
+
+  const startClusterConfigRun = async () => {
+    setDeployPhase("running");
+    setDeployMessage("클러스터 구성 Job을 시작하고 있습니다.");
+    setDeployJob(null);
+    setDeployJobId("");
+
+    try {
+      await ensureNewSSHKeyBundle();
+      await ensureExistingSSHKeyUploaded();
+      setDeployMessage("클러스터 구성 Job을 시작하고 있습니다.");
+      const job = await startDeployRun(buildClusterApplyPayload());
+      setDeployJob(job);
+      setDeployJobId(job.jobId);
+      setDeployMessage(job.jobId ? `클러스터 구성 Job이 시작되었습니다. Job ID ${job.jobId}` : "클러스터 구성 Job이 시작되었습니다.");
+
+      if (job.status === "succeeded") {
+        await refreshClusterJsonDownloadHref();
+        setDeployPhase("success");
+        onCompleted?.();
+        window.setTimeout(() => deployNextStepRef.current?.(), 700);
+      } else if (job.status === "failed") {
+        setDeployPhase("error");
+        setDeployMessage(job.message || "클러스터 구성 Job이 실패했습니다.");
+      }
+    } catch (error) {
+      setDeployPhase("error");
+      setDeployMessage(`클러스터 구성 Job 시작에 실패했습니다: ${errorMessage(error)}`);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!deployJobId || deployPhase !== "running") return undefined;
+
+    let disposed = false;
+
+    const refreshJob = () => {
+      fetchDeployRunJobs()
+        .then((jobs) => {
+          if (disposed) return;
+          const nextJob = jobs.find((job) => job.jobId === deployJobId);
+
+          if (!nextJob) return;
+          setDeployJob(nextJob);
+          if (nextJob.status === "succeeded") {
+            refreshClusterJsonDownloadHref()
+              .catch(() => undefined)
+              .finally(() => {
+                if (disposed) return;
+                setDeployPhase("success");
+                setDeployMessage("클러스터 구성 준비가 완료되었습니다.");
+                onCompleted?.();
+                window.setTimeout(() => {
+                  if (!disposed) deployNextStepRef.current?.();
+                }, 700);
+              });
+          } else if (nextJob.status === "failed") {
+            setDeployPhase("error");
+            setDeployMessage(nextJob.message || "클러스터 구성 Job이 실패했습니다.");
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            setDeployMessage(`Job 상태 확인에 실패했습니다: ${errorMessage(error)}`);
+          }
+        });
+    };
+
+    refreshJob();
+    const intervalId = window.setInterval(refreshJob, 3000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, [deployJobId, deployPhase, onCompleted, refreshClusterJsonDownloadHref]);
+
   const wizardFooter = (activeStep: any, goToNextStep: () => void, goToPrevStep: () => void, close: () => void) => {
     if (!activeStep) return null;
     const stepId = String(activeStep.id);
     const isFirst = stepId === "cluster-config-overview";
     const isReview = stepId === "cluster-config-review";
+    const isDeploy = stepId === "cluster-config-finish";
     const isFinish = stepId === "cluster-config-complete";
+
+    if (isDeploy) {
+      deployNextStepRef.current = goToNextStep;
+
+      return (
+        <div className="ct-cluster-config-wizard__footer">
+          {deployPhase === "error" && (
+            <Button variant="primary" onClick={() => void startClusterConfigRun()}>
+              다시 구성
+            </Button>
+          )}
+          {deployPhase === "success" && (
+            <Button variant="primary" onClick={goToNextStep}>
+              완료
+            </Button>
+          )}
+          {deployPhase === "running" && (
+            <Button variant="primary" isDisabled>
+              구성 중
+            </Button>
+          )}
+          {deployPhase === "error" && (
+            <Button variant="secondary" onClick={goToPrevStep}>
+              이전
+            </Button>
+          )}
+          <Button variant="link" onClick={close} isDisabled={deployPhase === "running"}>
+            취소
+          </Button>
+        </div>
+      );
+    }
+
     return (
       <div className="ct-cluster-config-wizard__footer">
         {!isFinish && (
@@ -459,11 +1422,20 @@ export default function ClusterConfigPrepareWizardModal({
                   return;
                 }
                 setValidationMessage("");
+                setDeployPhase("running");
+                goToNextStep();
+                window.setTimeout(() => {
+                  void startClusterConfigRun();
+                }, 0);
+                return;
+              }
+              if (stepId === "cluster-config-ip-info") {
+                applyTimeServersFromClusterHosts();
               }
               goToNextStep();
             }}
           >
-            {isReview ? "완료" : "다음"}
+            {isReview ? "구성" : "다음"}
           </Button>
         )}
         {!isFirst && !isFinish && (
@@ -585,7 +1557,12 @@ export default function ClusterConfigPrepareWizardModal({
         onSave={handleClose}
         width="100%"
         navAriaLabel="클러스터 구성 준비 단계"
-        className="ct-cluster-config-wizard"
+        isVisitRequired
+        className={[
+          "ct-cluster-config-wizard",
+          deployPhase !== "idle" ? "ct-wizard--execution-visible" : "",
+          deployPhase === "success" ? "ct-wizard--complete-visible" : "",
+        ].join(" ")}
         footer={wizardFooter}
         header={
           <div className="ct-cluster-config-wizard__header">
@@ -698,7 +1675,10 @@ export default function ClusterConfigPrepareWizardModal({
                     name="ssh-key-mode"
                     label="신규 생성"
                     isChecked={sshKeyMode === "new"}
-                    onChange={() => setSshKeyMode("new")}
+                    onChange={() => {
+                      setSshKeyMode("new");
+                      clearSSHKeyFile();
+                    }}
                   />
                   <Radio
                     id="ssh-key-existing"
@@ -709,29 +1689,18 @@ export default function ClusterConfigPrepareWizardModal({
                   />
                 </div>
               </FormGroup>
-              <FormGroup label="SSH 개인 키 파일" isRequired fieldId="ssh-private-key">
-                <FileUpload
-                  id="ssh-private-key-file"
-                  type="text"
-                  value=""
-                  filename={sshPrivateFilename}
-                  filenamePlaceholder="선택된 파일 없음"
-                  onFileInputChange={(_, file) => readTextFile(file, setSshPrivateFilename, setSshPrivateText)}
-                  isDisabled={sshKeyMode === "new"}
-                  hideDefaultPreview
-                />
-              </FormGroup>
-              <FormGroup label="SSH 공개 키 파일" isRequired fieldId="ssh-public-key">
-                <FileUpload
-                  id="ssh-public-key-file"
-                  type="text"
-                  value=""
-                  filename={sshPublicFilename}
-                  filenamePlaceholder="선택된 파일 없음"
-                  onFileInputChange={(_, file) => readTextFile(file, setSshPublicFilename, setSshPublicText)}
-                  isDisabled={sshKeyMode === "new"}
-                  hideDefaultPreview
-                />
+              <FormGroup label="SSH KEY 파일" isRequired fieldId="ssh-key-file">
+                {renderFileAttachControl({
+                  id: "ssh-key-file",
+                  inputRef: sshKeyFileInputRef,
+                  filename: sshKeyFilename,
+                  placeholder: "선택된 .dat 파일 없음",
+                  accept: ".dat",
+                  isDisabled: sshKeyMode === "new",
+                  onFileSelect: readSSHKeyFile,
+                  onClear: clearSSHKeyFile,
+                })}
+                {renderSSHKeyPreview()}
               </FormGroup>
             </Form>
           </div>
@@ -794,15 +1763,15 @@ export default function ClusterConfigPrepareWizardModal({
 
               {hostsFileMode === "existing" && (
                 <FormGroup label="클러스터 구성 파일" fieldId="hosts-file">
-                  <FileUpload
-                    id="hosts-file"
-                    type="text"
-                    value=""
-                    filename={hostsFilename}
-                    filenamePlaceholder="선택된 파일 없음"
-                    onFileInputChange={(_, file) => readTextFile(file, setHostsFilename, setHostsFileText)}
-                    hideDefaultPreview
-                  />
+                  {renderFileAttachControl({
+                    id: "hosts-file",
+                    inputRef: clusterConfigFileInputRef,
+                    filename: hostsFilename,
+                    placeholder: "선택된 cluster.json 파일 없음",
+                    accept: ".json,application/json",
+                    onFileSelect: readClusterConfigFile,
+                    onClear: clearClusterConfigFile,
+                  })}
                 </FormGroup>
               )}
 
@@ -810,13 +1779,12 @@ export default function ClusterConfigPrepareWizardModal({
                 <TextInput
                   id="current-hostname"
                   value={currentHostname}
-                  onChange={(_event, value) => setCurrentHostname(value)}
                   readOnly
                 />
               </FormGroup>
 
               {clusterType === "ablestack-vm" && (
-                <FormGroup label="iSCSI 스토리지 전용" fieldId="iscsi-storage-exclusive">
+                <FormGroup label="스토리지 네트워크 전용" fieldId="iscsi-storage-exclusive">
                   <Switch
                     id="iscsi-storage-exclusive"
                     label={isIscsiExclusive ? "사용" : "미사용"}
@@ -867,20 +1835,6 @@ export default function ClusterConfigPrepareWizardModal({
                 </>
               )}
 
-              {!isVmLikeCluster && (
-                <>
-                  <FormGroup label="PCS 호스트 PN IP #1" isRequired fieldId="pcs-pn-1">
-                    <TextInput id="pcs-pn-1" value={pcsPnIp1} onChange={(_event, value) => setPcsPnIp1(value)} isDisabled={hostsFileMode === "existing"} />
-                  </FormGroup>
-                  <FormGroup label="PCS 호스트 PN IP #2" isRequired fieldId="pcs-pn-2">
-                    <TextInput id="pcs-pn-2" value={pcsPnIp2} onChange={(_event, value) => setPcsPnIp2(value)} isDisabled={hostsFileMode === "existing"} />
-                  </FormGroup>
-                  <FormGroup label="PCS 호스트 PN IP #3" isRequired fieldId="pcs-pn-3">
-                    <TextInput id="pcs-pn-3" value={pcsPnIp3} onChange={(_event, value) => setPcsPnIp3(value)} isDisabled={hostsFileMode === "existing"} />
-                  </FormGroup>
-                </>
-              )}
-
               {isVmAddHost && (
                 <div className="ct-cluster-config-wizard__field-group">
                   <div className="ct-cluster-config-wizard__field-group-title">추가할 호스트 정보</div>
@@ -909,24 +1863,6 @@ export default function ClusterConfigPrepareWizardModal({
               </Content>
             </Content>
             <Form className="ct-cluster-config-wizard__section ct-cluster-config-wizard__form-horizontal" isHorizontal>
-              <FormGroup label="시간서버 종류" isRequired fieldId="time-server-type">
-                <div className="ct-cluster-config-wizard__inline">
-                  <Radio
-                    id="time-server-local"
-                    name="time-server-type"
-                    label="로컬 시간서버"
-                    isChecked={timeServerType === "internal"}
-                    onChange={() => setTimeServerType("internal")}
-                  />
-                  <Radio
-                    id="time-server-external"
-                    name="time-server-type"
-                    label="외부 시간서버"
-                    isChecked={timeServerType === "external"}
-                    onChange={() => setTimeServerType("external")}
-                  />
-                </div>
-              </FormGroup>
               <FormGroup label="현재 Host" isRequired fieldId="host-role">
                 <div className="ct-cluster-config-wizard__inline">
                   <Radio
@@ -981,7 +1917,7 @@ export default function ClusterConfigPrepareWizardModal({
             <Content>
               <Content component="p">
                 클러스터 구성을 위해 설정한 SSH Key, 호스트 프로파일, 시간 동기화 서버 정보는 다음과 같습니다.
-                정보를 수정해야 하는 경우 해당 단계로 이동하십시오. 설정을 완료하려면 "완료" 버튼을 눌러 설정을 완료합니다.
+                정보를 수정해야 하는 경우 해당 단계로 이동하십시오. 설정을 확인한 뒤 "구성" 버튼을 누르면 API Job이 실행됩니다.
               </Content>
             </Content>
             <div className="ct-cluster-config-wizard__review-accordion">
@@ -1025,27 +1961,9 @@ export default function ClusterConfigPrepareWizardModal({
                         <DescriptionListDescription>{sshKeyModeLabel}</DescriptionListDescription>
                       </DescriptionListGroup>
                       <DescriptionListGroup>
-                        <DescriptionListTerm>Private Key 내용</DescriptionListTerm>
+                        <DescriptionListTerm>SSH KEY 파일</DescriptionListTerm>
                         <DescriptionListDescription>
-                          <TextArea
-                            aria-label="SSH 개인 Key 설정 확인"
-                            readOnly
-                            value={sshPrivateText || (sshKeyMode === "new" ? "신규 SSH 개인 키는 구성 실행 시 생성됩니다." : sshPrivateFilename)}
-                            rows={6}
-                            className="ct-cluster-config-wizard__review-textarea"
-                          />
-                        </DescriptionListDescription>
-                      </DescriptionListGroup>
-                      <DescriptionListGroup>
-                        <DescriptionListTerm>Public Key 내용</DescriptionListTerm>
-                        <DescriptionListDescription>
-                          <TextArea
-                            aria-label="SSH 공개 Key 설정 확인"
-                            readOnly
-                            value={sshPublicText || (sshKeyMode === "new" ? "신규 SSH 공개 키는 구성 실행 시 생성됩니다." : sshPublicFilename)}
-                            rows={6}
-                            className="ct-cluster-config-wizard__review-textarea"
-                          />
+                          {renderSSHKeyPreview(true)}
                         </DescriptionListDescription>
                       </DescriptionListGroup>
                     </DescriptionList>
@@ -1077,7 +1995,7 @@ export default function ClusterConfigPrepareWizardModal({
                       </DescriptionListGroup>
                       {clusterType === "ablestack-vm" && (
                         <DescriptionListGroup>
-                          <DescriptionListTerm>iSCSI 스토리지 전용</DescriptionListTerm>
+                          <DescriptionListTerm>스토리지 네트워크 전용</DescriptionListTerm>
                           <DescriptionListDescription>{isIscsiExclusive ? "사용" : "미사용"}</DescriptionListDescription>
                         </DescriptionListGroup>
                       )}
@@ -1110,22 +2028,6 @@ export default function ClusterConfigPrepareWizardModal({
                           <DescriptionListGroup>
                             <DescriptionListTerm>관리 NIC DNS</DescriptionListTerm>
                             <DescriptionListDescription>{mgmtDns}</DescriptionListDescription>
-                          </DescriptionListGroup>
-                        </>
-                      )}
-                      {!isVmLikeCluster && (
-                        <>
-                          <DescriptionListGroup>
-                            <DescriptionListTerm>PCS 호스트 PN IP #1</DescriptionListTerm>
-                            <DescriptionListDescription>{pcsPnIp1}</DescriptionListDescription>
-                          </DescriptionListGroup>
-                          <DescriptionListGroup>
-                            <DescriptionListTerm>PCS 호스트 PN IP #2</DescriptionListTerm>
-                            <DescriptionListDescription>{pcsPnIp2}</DescriptionListDescription>
-                          </DescriptionListGroup>
-                          <DescriptionListGroup>
-                            <DescriptionListTerm>PCS 호스트 PN IP #3</DescriptionListTerm>
-                            <DescriptionListDescription>{pcsPnIp3}</DescriptionListDescription>
                           </DescriptionListGroup>
                         </>
                       )}
@@ -1173,10 +2075,6 @@ export default function ClusterConfigPrepareWizardModal({
                   <div className="ct-cluster-config-wizard__review-body">
                     <DescriptionList isCompact className="ct-cluster-config-wizard__review-detail">
                       <DescriptionListGroup>
-                        <DescriptionListTerm>시간서버 종류</DescriptionListTerm>
-                        <DescriptionListDescription>{timeServerTypeLabel}</DescriptionListDescription>
-                      </DescriptionListGroup>
-                      <DescriptionListGroup>
                         <DescriptionListTerm>로컬 시간서버</DescriptionListTerm>
                         <DescriptionListDescription>{hostRoleLabel}</DescriptionListDescription>
                       </DescriptionListGroup>
@@ -1204,23 +2102,52 @@ export default function ClusterConfigPrepareWizardModal({
           <div className="ct-cluster-config-wizard__content">
             <Content>
               <Content component="p">
-                클러스터 구성 준비 중입니다. 전체 3단계 중 1단계 진행 중입니다.
+                클러스터 구성 준비 API를 실행하고 있습니다. 각 단계의 결과에 따라 완료 또는 실패 상태가 표시됩니다.
               </Content>
             </Content>
+            {deployMessage && (
+              <Alert
+                className="ct-cluster-config-wizard__deploy-alert"
+                isInline
+                variant={deployPhase === "error" ? "danger" : deployPhase === "success" ? "success" : "info"}
+                title={deployMessage}
+              />
+            )}
             <div className="ct-cluster-config-wizard__status-list">
-              <div>
-                <Label color="blue" variant="outline">준비중</Label>
-                <span>SSH Key File 생성</span>
-              </div>
-              <div>
-                <Label color="blue" variant="outline">준비중</Label>
-                <span>{isVmAddHost ? "Cluster Config 및 Hosts 파일 생성 및 PCS 호스트 추가 설정" : "Cluster Config 및 Hosts 파일 생성"}</span>
-              </div>
-              <div>
-                <Label color="blue" variant="outline">준비중</Label>
-                <span>시간서버 설정 생성 및 마무리</span>
-              </div>
+              {progressRows().map((row) => (
+                <div key={row.id} className={`ct-cluster-config-wizard__status-row ct-cluster-config-wizard__status-row--${row.status}`}>
+                  {progressLabel(row.status)}
+                  <span>{row.label}</span>
+                  {row.message && <small>{row.message}</small>}
+                </div>
+              ))}
             </div>
+            {applyTargetResults.length > 0 && (
+              <div className="ct-cluster-config-wizard__target-results">
+                <div className="ct-cluster-config-wizard__target-results-header">
+                  <strong>대상별 적용 결과</strong>
+                  <span>각 호스트의 apply-local API 호출 결과입니다.</span>
+                </div>
+                <div className="ct-cluster-config-wizard__target-results-list">
+                  {applyTargetResults.map((result) => (
+                    <div
+                      key={`${result.target}-${result.code}-${result.message}`}
+                      className={[
+                        "ct-cluster-config-wizard__target-result",
+                        result.isFailed ? "ct-cluster-config-wizard__target-result--failed" : "ct-cluster-config-wizard__target-result--success",
+                      ].join(" ")}
+                    >
+                      <Label color={result.isFailed ? "red" : "green"}>
+                        {result.isFailed ? "실패" : "성공"}
+                      </Label>
+                      <strong>{formatApplyTarget(result.target)}</strong>
+                      <small>Code {result.code}</small>
+                      <span>{formatApplyResultMessage(result)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </WizardStep>
 
@@ -1236,34 +2163,28 @@ export default function ClusterConfigPrepareWizardModal({
             </Content>
             <div className="ct-cluster-config-wizard__download-list">
               <span>
-                - Private SSH Key 다운로드
+                - SSH KEY 파일 다운로드
                 <a
                   className="pf-v6-c-button pf-m-link"
-                  href={downloadHref(sshPrivateText)}
-                  download="id_rsa"
-                >
-                  파일을 재사용 하려면 클릭하십시오
-                </a>
-              </span>
-              <span>
-                - Public SSH Key 다운로드
-                <a
-                  className="pf-v6-c-button pf-m-link"
-                  href={downloadHref(sshPublicText)}
-                  download="id_rsa.pub"
+                  href={sshKeyBundleHref || downloadHref(sshKeyText)}
+                  download="ssh-key.dat"
                 >
                   파일을 재사용 하려면 클릭하십시오
                 </a>
               </span>
               <span>
                 - 클러스터 구성 프로파일 다운로드
-                <a
-                  className="pf-v6-c-button pf-m-link"
-                  href={downloadHref(buildClusterJsonPreview())}
-                  download="cluster.json"
-                >
-                  파일을 재사용 하려면 클릭하십시오
-                </a>
+                {clusterJsonDownloadHref ? (
+                  <a
+                    className="pf-v6-c-button pf-m-link"
+                    href={clusterJsonDownloadHref}
+                    download="cluster.json"
+                  >
+                    파일을 재사용 하려면 클릭하십시오
+                  </a>
+                ) : (
+                  <span>{clusterJsonDownloadError || "저장된 cluster.json 파일을 확인하고 있습니다."}</span>
+                )}
               </span>
             </div>
           </div>

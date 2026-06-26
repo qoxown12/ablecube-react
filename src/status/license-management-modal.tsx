@@ -1,329 +1,254 @@
 // 상단 "라이센스 관리" 버튼에서 사용하는 라이센스 상태 확인/등록 모달입니다.
 import React from "react";
+
 import {
-  Button,
-  Content,
-  Form,
-  FormGroup,
-  Modal,
-  ModalBody,
-  ModalFooter,
-  ModalHeader,
-  Spinner,
+    Button,
+    Content,
+    Form,
+    FormGroup,
+    Modal,
+    ModalBody,
+    ModalFooter,
+    ModalHeader,
+    Spinner,
 } from "@patternfly/react-core";
 import {
-  CheckCircleIcon,
-  ExclamationCircleIcon,
-  ExclamationTriangleIcon,
-  InfoCircleIcon,
+    CheckCircleIcon,
+    ExclamationCircleIcon,
+    ExclamationTriangleIcon,
+    InfoCircleIcon,
 } from "@patternfly/react-icons";
-import cockpit from "cockpit";
+
+import {
+    fetchLicenseStatus,
+    registerLicenseFile,
+    type LicenseStatus,
+} from "../services/api/license.ts";
 
 interface LicenseManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type LicenseStatusKind = "loading" | "active" | "inactive" | "missing" | "error";
 type RegisterStatusKind = "idle" | "registering" | "success" | "error";
 
-interface LicenseStatus {
-  kind: LicenseStatusKind;
-  issued?: string;
-  expired?: string;
-  message?: string;
-}
-
-const LICENSE_SCRIPT = "/usr/share/cockpit/ablestack/python/license/register_license.py";
-
-const isSuccessCode = (code: unknown) => String(code) === "200";
-const isMissingCode = (code: unknown) => String(code) === "404";
-
-function arrayBufferToBase64(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-
-  return window.btoa(binary);
-}
-
-function readFileAsBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (!(reader.result instanceof ArrayBuffer)) {
-        reject(new Error("라이센스 파일을 읽을 수 없습니다."));
-        return;
-      }
-      resolve(arrayBufferToBase64(reader.result));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("라이센스 파일을 읽을 수 없습니다."));
-    reader.readAsArrayBuffer(file);
-  });
-}
-
-function parseLicenseStatus(stdout: string): LicenseStatus {
-  const result = JSON.parse(stdout);
-  const status = result?.val?.status;
-
-  if (isSuccessCode(result?.code) && status === "active") {
-    return {
-      kind: "active",
-      issued: result.val.issued,
-      expired: result.val.expired,
-    };
-  }
-
-  if (isSuccessCode(result?.code) && status === "inactive") {
-    return {
-      kind: "inactive",
-      issued: result.val.issued,
-      expired: result.val.expired,
-    };
-  }
-
-  if (isMissingCode(result?.code)) {
-    return { kind: "missing" };
-  }
-
-  return {
-    kind: "error",
-    message: typeof result?.val === "string" ? result.val : "라이센스 상태 확인 중 오류가 발생했습니다.",
-  };
-}
-
 function statusErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+    return error instanceof Error ? error.message : String(error);
 }
 
 export default function LicenseManagementModal({
-  isOpen,
-  onClose,
+    isOpen,
+    onClose,
 }: LicenseManagementModalProps) {
-  const [licenseFile, setLicenseFile] = React.useState<File | null>(null);
-  const [licenseStatus, setLicenseStatus] = React.useState<LicenseStatus>({
-    kind: "loading",
-  });
-  const [registerStatus, setRegisterStatus] = React.useState<RegisterStatusKind>("idle");
-  const [registerMessage, setRegisterMessage] = React.useState("");
-  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+    const [licenseFile, setLicenseFile] = React.useState<File | null>(null);
+    const [licenseStatus, setLicenseStatus] = React.useState<LicenseStatus>({
+        kind: "loading",
+    });
+    const [registerStatus, setRegisterStatus] = React.useState<RegisterStatusKind>("idle");
+    const [registerMessage, setRegisterMessage] = React.useState("");
+    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  const clearSelectedFile = () => {
-    setLicenseFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
+    const clearSelectedFile = () => {
+        setLicenseFile(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+        }
+    };
 
-  const loadLicenseStatus = React.useCallback(() => {
-    setLicenseStatus({ kind: "loading" });
+    const loadLicenseStatus = React.useCallback(() => {
+        setLicenseStatus({ kind: "loading" });
 
-    cockpit
-      .spawn(["python3", LICENSE_SCRIPT, "--status"], { superuser: true })
-      .then((stdout) => {
-        setLicenseStatus(parseLicenseStatus(stdout));
-      })
-      .catch((error) => {
-        setLicenseStatus({
-          kind: "error",
-          message: statusErrorMessage(error) || "시스템 오류가 발생했습니다.",
-        });
-      });
-  }, []);
+        fetchLicenseStatus()
+                .then(setLicenseStatus)
+                .catch((error) => {
+                    setLicenseStatus({
+                        kind: "error",
+                        message: statusErrorMessage(error) || "시스템 오류가 발생했습니다.",
+                    });
+                });
+    }, []);
 
-  React.useEffect(() => {
-    if (!isOpen) return;
+    React.useEffect(() => {
+        if (!isOpen) return;
 
-    clearSelectedFile();
-    setRegisterStatus("idle");
-    setRegisterMessage("");
-    loadLicenseStatus();
-  }, [isOpen, loadLicenseStatus]);
-
-  const closeModal = () => {
-    clearSelectedFile();
-    setRegisterStatus("idle");
-    setRegisterMessage("");
-    onClose();
-  };
-
-  const registerLicense = async () => {
-    if (!licenseFile) {
-      setRegisterStatus("error");
-      setRegisterMessage("라이센스 파일을 선택해주세요.");
-      return;
-    }
-
-    setRegisterStatus("registering");
-    setRegisterMessage("라이센스를 등록하는 중입니다. 잠시만 기다려주세요.");
-
-    try {
-      const base64Content = await readFileAsBase64(licenseFile);
-      const stdout = await cockpit.spawn(
-        [
-          "python3",
-          LICENSE_SCRIPT,
-          "--license-content",
-          base64Content,
-          "--original-filename",
-          licenseFile.name,
-        ],
-        { superuser: true }
-      );
-      const result = JSON.parse(stdout);
-
-      if (isSuccessCode(result?.code)) {
-        setRegisterStatus("success");
-        setRegisterMessage("라이센스가 성공적으로 등록되었습니다.");
         clearSelectedFile();
+        setRegisterStatus("idle");
+        setRegisterMessage("");
         loadLicenseStatus();
-        return;
-      }
+    }, [isOpen, loadLicenseStatus]);
 
-      setRegisterStatus("error");
-      setRegisterMessage(`라이센스 등록 실패: ${result?.val ?? "알 수 없는 오류"}`);
-    } catch (error) {
-      setRegisterStatus("error");
-      setRegisterMessage(`라이센스 등록 중 오류가 발생했습니다: ${statusErrorMessage(error)}`);
-    }
-  };
+    const closeModal = () => {
+        clearSelectedFile();
+        setRegisterStatus("idle");
+        setRegisterMessage("");
+        onClose();
+    };
 
-  const renderLicenseDescription = () => {
-    if (licenseStatus.kind === "loading") {
-      return (
-        <div className="ct-license-management-modal__description">
-          <Spinner size="sm" aria-label="라이센스 상태 확인 중" />
-          <span>라이센스 상태를 확인하는 중입니다.</span>
-        </div>
-      );
-    }
+    const registerLicense = async () => {
+        if (!licenseFile) {
+            setRegisterStatus("error");
+            setRegisterMessage("라이센스 파일을 선택해주세요.");
+            return;
+        }
 
-    if (licenseStatus.kind === "active") {
-      return (
-        <div className="ct-license-management-modal__description">
-          <CheckCircleIcon className="ct-license-management-modal__icon--success" aria-hidden="true" />
-          <div>
-            <Content component="p">라이센스가 등록되어 있습니다.</Content>
-            <Content component="p"><strong>시작일:</strong> {licenseStatus.issued || "-"}</Content>
-            <Content component="p"><strong>만료일:</strong> {licenseStatus.expired || "-"}</Content>
-            <hr />
-            <Content component="p" className="ct-license-management-modal__muted">
-              새로운 라이센스를 등록하면 기존 라이센스가 교체됩니다.
-            </Content>
-          </div>
-        </div>
-      );
-    }
+        setRegisterStatus("registering");
+        setRegisterMessage("라이센스를 등록하는 중입니다. 잠시만 기다려주세요.");
 
-    if (licenseStatus.kind === "inactive") {
-      return (
-        <div className="ct-license-management-modal__description">
-          <ExclamationTriangleIcon className="ct-license-management-modal__icon--danger" aria-hidden="true" />
-          <div>
-            <Content component="p" className="ct-license-management-modal__danger-text">
-              등록된 라이선스의 유효기간이 만료되었습니다. 새로운 라이센스를 등록해 주세요.
-            </Content>
-            <Content component="p"><strong>시작일:</strong> {licenseStatus.issued || "-"}</Content>
-            <Content component="p"><strong>만료일:</strong> {licenseStatus.expired || "-"}</Content>
-            <hr />
-            <Content component="p" className="ct-license-management-modal__muted">
-              새로운 라이센스를 등록하면 기존 라이센스가 교체됩니다.
-            </Content>
-          </div>
-        </div>
-      );
-    }
+        try {
+            await registerLicenseFile(licenseFile, licenseStatus.kind === "active");
+            setRegisterStatus("success");
+            setRegisterMessage("라이센스가 성공적으로 등록되었습니다.");
+            clearSelectedFile();
+            loadLicenseStatus();
+        } catch (error) {
+            setRegisterStatus("error");
+            setRegisterMessage(`라이센스 등록 중 오류가 발생했습니다: ${statusErrorMessage(error)}`);
+        }
+    };
 
-    if (licenseStatus.kind === "missing") {
-      return (
-        <div className="ct-license-management-modal__description">
-          <ExclamationCircleIcon className="ct-license-management-modal__icon--warning" aria-hidden="true" />
-          <div>
-            <Content component="p">등록된 라이센스가 없습니다.</Content>
-            <Content component="p">라이센스 파일을 선택하여 등록해주세요.</Content>
-          </div>
-        </div>
-      );
-    }
+    const renderLicenseDescription = () => {
+        if (licenseStatus.kind === "loading") {
+            return (
+                <div className="ct-license-management-modal__description">
+                    <Spinner size="sm" aria-label="라이센스 상태 확인 중" />
+                    <span>라이센스 상태를 확인하는 중입니다.</span>
+                </div>
+            );
+        }
+
+        if (licenseStatus.kind === "active") {
+            return (
+                <div className="ct-license-management-modal__description">
+                    <CheckCircleIcon className="ct-license-management-modal__icon--success" aria-hidden="true" />
+                    <div>
+                        <Content component="p">라이센스가 등록되어 있습니다.</Content>
+                        <Content component="p"><strong>시작일:</strong> {licenseStatus.issued || "-"}</Content>
+                        <Content component="p"><strong>만료일:</strong> {licenseStatus.expired || "-"}</Content>
+                        <hr />
+                        <Content component="p" className="ct-license-management-modal__muted">
+                            새로운 라이센스를 등록하면 기존 라이센스가 교체됩니다.
+                        </Content>
+                    </div>
+                </div>
+            );
+        }
+
+        if (licenseStatus.kind === "inactive") {
+            return (
+                <div className="ct-license-management-modal__description">
+                    <ExclamationTriangleIcon className="ct-license-management-modal__icon--danger" aria-hidden="true" />
+                    <div>
+                        <Content component="p" className="ct-license-management-modal__danger-text">
+                            등록된 라이선스의 유효기간이 만료되었습니다. 새로운 라이센스를 등록해 주세요.
+                        </Content>
+                        <Content component="p"><strong>시작일:</strong> {licenseStatus.issued || "-"}</Content>
+                        <Content component="p"><strong>만료일:</strong> {licenseStatus.expired || "-"}</Content>
+                        <hr />
+                        <Content component="p" className="ct-license-management-modal__muted">
+                            새로운 라이센스를 등록하면 기존 라이센스가 교체됩니다.
+                        </Content>
+                    </div>
+                </div>
+            );
+        }
+
+        if (licenseStatus.kind === "missing") {
+            return (
+                <div className="ct-license-management-modal__description">
+                    <ExclamationCircleIcon className="ct-license-management-modal__icon--warning" aria-hidden="true" />
+                    <div>
+                        <Content component="p">등록된 라이센스가 없습니다.</Content>
+                        <Content component="p">라이센스 파일을 선택하여 등록해주세요.</Content>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="ct-license-management-modal__description">
+                <ExclamationTriangleIcon className="ct-license-management-modal__icon--danger" aria-hidden="true" />
+                <div>
+                    <Content component="p">라이센스 상태 확인 중 오류가 발생했습니다.</Content>
+                    <Content component="p">{licenseStatus.message || "시스템 오류가 발생했습니다."}</Content>
+                </div>
+            </div>
+        );
+    };
+
+    const renderRegisterMessage = () => {
+        if (registerStatus === "idle") {
+            return (
+                <div
+                  className={[
+                      "ct-license-management-modal__description",
+                      "ct-license-management-modal__description--compact",
+                  ].join(" ")}
+                >
+                    <InfoCircleIcon aria-hidden="true" />
+                    <span>라이센스 파일을 선택해주세요.</span>
+                </div>
+            );
+        }
+
+        return (
+            <div
+              className={[
+                  "ct-license-management-modal__register-message",
+                  `ct-license-management-modal__register-message--${registerStatus}`,
+              ].join(" ")}
+            >
+                {registerStatus === "registering" && <Spinner size="sm" aria-label="라이센스 등록 중" />}
+                <span>{registerMessage}</span>
+            </div>
+        );
+    };
 
     return (
-      <div className="ct-license-management-modal__description">
-        <ExclamationTriangleIcon className="ct-license-management-modal__icon--danger" aria-hidden="true" />
-        <div>
-          <Content component="p">라이센스 상태 확인 중 오류가 발생했습니다.</Content>
-          <Content component="p">{licenseStatus.message || "시스템 오류가 발생했습니다."}</Content>
-        </div>
-      </div>
-    );
-  };
-
-  const renderRegisterMessage = () => {
-    if (registerStatus === "idle") {
-      return (
-        <div className="ct-license-management-modal__description ct-license-management-modal__description--compact">
-          <InfoCircleIcon aria-hidden="true" />
-          <span>라이센스 파일을 선택해주세요.</span>
-        </div>
-      );
-    }
-
-    return (
-      <div
-        className={`ct-license-management-modal__register-message ct-license-management-modal__register-message--${registerStatus}`}
-      >
-        {registerStatus === "registering" && <Spinner size="sm" aria-label="라이센스 등록 중" />}
-        <span>{registerMessage}</span>
-      </div>
-    );
-  };
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={closeModal}
-      variant="small"
-      aria-label="라이센스 관리"
-      className="ct-license-management-modal"
-    >
-      <ModalHeader title="라이센스 관리" />
-      <ModalBody>
-        <Form className="ct-license-management-modal__form" isHorizontal>
-          <FormGroup label="라이센스 파일" isRequired fieldId="input-license-file">
-            <input
-              ref={fileInputRef}
-              className="ct-license-management-modal__file-input"
-              type="file"
-              id="input-license-file"
-              name="input-license-file"
-              accept="*"
-              required
-              onChange={(event) => {
-                setLicenseFile(event.currentTarget.files?.[0] ?? null);
-                setRegisterStatus("idle");
-                setRegisterMessage("");
-              }}
-            />
-          </FormGroup>
-        </Form>
-        <div className="ct-license-management-modal__status">{renderLicenseDescription()}</div>
-        {renderRegisterMessage()}
-      </ModalBody>
-      <ModalFooter>
-        <Button
-          variant="primary"
-          isDisabled={!licenseFile || registerStatus === "registering"}
-          onClick={registerLicense}
+        <Modal
+          isOpen={isOpen}
+          onClose={closeModal}
+          variant="small"
+          aria-label="라이센스 관리"
+          className="ct-license-management-modal"
         >
-          실행
-        </Button>
-        <Button variant="link" onClick={closeModal}>
-          취소
-        </Button>
-      </ModalFooter>
-    </Modal>
-  );
+            <ModalHeader title="라이센스 관리" />
+            <ModalBody>
+                <Form className="ct-license-management-modal__form" isHorizontal>
+                    <FormGroup
+                      label="라이센스 파일" isRequired
+                      fieldId="input-license-file"
+                    >
+                        <input
+                          ref={fileInputRef}
+                          className="ct-license-management-modal__file-input"
+                          type="file"
+                          id="input-license-file"
+                          name="input-license-file"
+                          accept="*"
+                          required
+                          onChange={(event) => {
+                              setLicenseFile(event.currentTarget.files?.[0] ?? null);
+                              setRegisterStatus("idle");
+                              setRegisterMessage("");
+                          }}
+                        />
+                    </FormGroup>
+                </Form>
+                <div className="ct-license-management-modal__status">{renderLicenseDescription()}</div>
+                {renderRegisterMessage()}
+            </ModalBody>
+            <ModalFooter>
+                <Button
+                  variant="primary"
+                  isDisabled={!licenseFile || registerStatus === "registering"}
+                  onClick={registerLicense}
+                >
+                    실행
+                </Button>
+                <Button variant="link" onClick={closeModal}>
+                    취소
+                </Button>
+            </ModalFooter>
+        </Modal>
+    );
 }

@@ -1,168 +1,280 @@
 import React from "react";
+
 import {
-  PageSection,
-  PageSectionVariants,
-  Button,
-  ButtonVariant,
+    PageSection,
+    PageSectionVariants,
 } from "@patternfly/react-core";
 import { Gallery } from "@patternfly/react-core/dist/esm/layouts/Gallery";
 
-import StorageClusterStatus from "../cards/storage-cluster-status";
-import CloudClusterStatus from "../cards/cloud-cluster-status";
-import StorageVmStatus from "../cards/storage-vm-status";
-import CloudVmStatus from "../cards/cloud-vm-status";
-import GfsResourceStatus from "../cards/gfs-resource-status";
-import GfsDiskStatus from "../cards/gfs-disk-status";
-import ClusterConfigPrepareWizardModal from "../wizard/cluster-config-prepare-wizard";
-import StorageVmDeployWizardModal from "../wizard/storage-vm-deploy-wizard";
-import CloudVmDeployWizardModal from "../wizard/cloud-vm-deploy-wizard";
-import MonitoringCenterWizardModal from "../wizard/monitoring-center-wizard";
-import GfsStorageConfigureWizardModal from "../wizard/gfs-storage-configure-wizard";
-import ConfigFileDownloadModal from "./config-file-download-modal";
-import LicenseManagementModal from "./license-management-modal";
+import CloudClusterStatus from "../cards/cloud-cluster-status.tsx";
+import CloudVmStatus from "../cards/cloud-vm-status.tsx";
+import GfsDiskStatus from "../cards/gfs-disk-status.tsx";
+import GfsResourceStatus from "../cards/gfs-resource-status.tsx";
+import StorageClusterStatus from "../cards/storage-cluster-status.tsx";
+import StorageVmStatus from "../cards/storage-vm-status.tsx";
+import {
+    DEPLOY_STATUS_FALLBACK,
+    fetchDeployUrl,
+    type DeployStatusData,
+    type DeployUrlOption,
+} from "../services/api/deploy-status.ts";
+import CloudVmDeployWizardModal from "../wizard/cloud-vm-deploy-wizard.tsx";
+import ClusterConfigPrepareWizardModal from "../wizard/cluster-config-prepare-wizard.tsx";
+import GfsStorageConfigureWizardModal from "../wizard/gfs-storage-configure-wizard.tsx";
+import MonitoringCenterWizardModal from "../wizard/monitoring-center-wizard.tsx";
+import StorageVmDeployWizardModal from "../wizard/storage-vm-deploy-wizard.tsx";
+
+import AblestackUpdateModal from "./ablestack-update-modal.tsx";
+import AllInOneControlModal from "./all-in-one-control-modal.tsx";
+import ConfigFileDownloadModal from "./config-file-download-modal.tsx";
+import DeploymentOverview from "./deployment-overview.tsx";
+import LicenseManagementModal from "./license-management-modal.tsx";
+import SecurityPatchModal from "./security-patch-modal.tsx";
 
 import "./status.scss";
 
 export default function StatusPage() {
-  const [isClusterWizardOpen, setIsClusterWizardOpen] = React.useState(false);
-  const [isStorageVmWizardOpen, setIsStorageVmWizardOpen] = React.useState(false);
-  const [isCloudVmWizardOpen, setIsCloudVmWizardOpen] = React.useState(false);
-  const [isMonitoringWizardOpen, setIsMonitoringWizardOpen] = React.useState(false);
-  const [isGfsWizardOpen, setIsGfsWizardOpen] = React.useState(false);
-  const [isConfigFileDownloadOpen, setIsConfigFileDownloadOpen] = React.useState(false);
-  const [isLicenseManagementOpen, setIsLicenseManagementOpen] = React.useState(false);
+    const [isClusterWizardOpen, setIsClusterWizardOpen] = React.useState(false);
+    const [isStorageVmWizardOpen, setIsStorageVmWizardOpen] = React.useState(false);
+    const [isCloudVmWizardOpen, setIsCloudVmWizardOpen] = React.useState(false);
+    const [isMonitoringWizardOpen, setIsMonitoringWizardOpen] = React.useState(false);
+    const [isGfsWizardOpen, setIsGfsWizardOpen] = React.useState(false);
+    const [isConfigFileDownloadOpen, setIsConfigFileDownloadOpen] = React.useState(false);
+    const [isLicenseManagementOpen, setIsLicenseManagementOpen] = React.useState(false);
+    const [isAllInOneControlOpen, setIsAllInOneControlOpen] = React.useState(false);
+    const [isSecurityPatchOpen, setIsSecurityPatchOpen] = React.useState(false);
+    const [isAblestackUpdateOpen, setIsAblestackUpdateOpen] = React.useState(false);
+    const [deployStatus, setDeployStatus] = React.useState<DeployStatusData>(DEPLOY_STATUS_FALLBACK);
+    const [actionNotice, setActionNotice] = React.useState("");
+    const [statusRefreshKey, setStatusRefreshKey] = React.useState(0);
 
-  return (
-    <>
-      {/* 헤더 */}
-      <PageSection
-        variant={PageSectionVariants.light}
-        className="ct-status-header"
-      >
-        <div className="ct-status-header-hostname">
-          <h1>ABLESTACK 가상어플라이언스 상태</h1>
-          <div className="ct-status-header-desc">
-            ABLESTACK 스토리지센터 및 클라우드센터 VM 배포되었으며 모니터링센터 구성이 완료되었습니다. 가상어플라이언스 상태가 정상입니다.
-          </div>
-        </div>
-      </PageSection>
+    const refreshDeployOverview = React.useCallback(() => {
+        setStatusRefreshKey((current) => current + 1);
+    }, []);
 
-      {/* 버튼 */}
-      <PageSection
-        variant={PageSectionVariants.default}
-        className="ct-status-buttons"
-      >
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsClusterWizardOpen(true)}
-        >
-          클러스터 구성 준비
-        </Button>
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsStorageVmWizardOpen(true)}
-        >
-          스토리지센터 가상머신 배포
-        </Button>
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsGfsWizardOpen(true)}
-        >
-          GFS 스토리지 구성
-        </Button>
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsCloudVmWizardOpen(true)}
-        >
-          클라우드센터 VM 배포
-        </Button>
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsMonitoringWizardOpen(true)}
-        >
-          모니터링센터 구성
-        </Button>
-        <Button variant={ButtonVariant.secondary}>
-          모니터링센터 대시보드 연결
-        </Button>
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsConfigFileDownloadOpen(true)}
-        >
-          설정파일 다운로드
-        </Button>
-        <Button
-          variant={ButtonVariant.secondary}
-          onClick={() => setIsLicenseManagementOpen(true)}
-        >
-          라이센스 관리
-        </Button>
-      </PageSection>
+    const openCenterUrl = async (option: DeployUrlOption, title: string) => {
+        setActionNotice("");
+        const centerWindow = window.open("about:blank", "_blank");
 
-      <ClusterConfigPrepareWizardModal
-        isOpen={isClusterWizardOpen}
-        onClose={() => setIsClusterWizardOpen(false)}
-      />
+        if (!centerWindow) {
+            setActionNotice("브라우저 팝업 차단을 해제한 후 다시 시도해주세요.");
+            return;
+        }
 
-      <StorageVmDeployWizardModal
-        isOpen={isStorageVmWizardOpen}
-        onClose={() => setIsStorageVmWizardOpen(false)}
-      />
+        try {
+            centerWindow.document.title = title;
 
-      <CloudVmDeployWizardModal
-        isOpen={isCloudVmWizardOpen}
-        onClose={() => setIsCloudVmWizardOpen(false)}
-      />
+            const targetUrl = await fetchDeployUrl(option);
 
-      <MonitoringCenterWizardModal
-        isOpen={isMonitoringWizardOpen}
-        onClose={() => setIsMonitoringWizardOpen(false)}
-      />
+            centerWindow.opener = null;
+            centerWindow.location.href = targetUrl;
+        } catch (error) {
+            centerWindow.close();
+            setActionNotice(
+                error instanceof Error ? error.message : `${title} 주소 조회에 실패했습니다.`
+            );
+        }
+    };
 
-      <GfsStorageConfigureWizardModal
-        isOpen={isGfsWizardOpen}
-        onClose={() => setIsGfsWizardOpen(false)}
-      />
+    const handleDeployAction = (action: string) => {
+        setActionNotice("");
 
-      <ConfigFileDownloadModal
-        isOpen={isConfigFileDownloadOpen}
-        onClose={() => setIsConfigFileDownloadOpen(false)}
-      />
+        switch (action) {
+        case "manage_license":
+            setIsLicenseManagementOpen(true);
+            break;
+        case "download_config_file":
+            setIsConfigFileDownloadOpen(true);
+            break;
+        case "prepare_cluster_config":
+            setIsClusterWizardOpen(true);
+            break;
+        case "deploy_storage_vm":
+        case "configure_storage_vm":
+            setIsStorageVmWizardOpen(true);
+            break;
+        case "configure_hci_shared_file":
+        case "configure_gfs_storage":
+            setIsGfsWizardOpen(true);
+            break;
+        case "configure_storage_cluster":
+        case "open_storage_center":
+            openCenterUrl("storageCenter", "스토리지센터 연결");
+            break;
+        case "deploy_cloud_vm":
+        case "configure_cloud_vm":
+            setIsCloudVmWizardOpen(true);
+            break;
+        case "configure_cloud_cluster":
+        case "configure_cloud_resource":
+        case "open_cloud_center":
+            openCenterUrl("cloudCenter", "클라우드센터 연결");
+            break;
+        case "configure_monitoring":
+            setIsMonitoringWizardOpen(true);
+            break;
+        case "open_monitoring_center":
+            openCenterUrl("wallCenter", "모니터링센터 연결");
+            break;
+        case "configure_local_storage":
+            setIsAllInOneControlOpen(true);
+            break;
+        case "run_security_patch":
+            setIsSecurityPatchOpen(true);
+            break;
+        case "ablestack_update":
+            setIsAblestackUpdateOpen(true);
+            break;
+        default:
+            setActionNotice(`${action} 작업은 아직 화면 액션에 연결되어 있지 않습니다.`);
+        }
+    };
 
-      <LicenseManagementModal
-        isOpen={isLicenseManagementOpen}
-        onClose={() => setIsLicenseManagementOpen(false)}
-      />
+    const renderDashboardCards = () => {
+        const osType = deployStatus.osType;
+        const usesGfs = osType === "ablestack-hci-filesystem" || osType === "ablestack-vm";
+        const isKnownProduct = [
+            "ablestack-hci",
+            "ablestack-hci-filesystem",
+            "ablestack-vm",
+            "ablestack-standalone",
+        ].includes(osType);
+        const cards: React.ReactElement[] = [];
+        const isLicenseRegistered = deployStatus.raw.licenseStatus.toLowerCase() === "true";
+        const isClusterPrepared = deployStatus.raw.clusterConfigStatus.toLowerCase() === "true";
 
-      {/* 상단 카드 (Health, Usage) */}
-      <PageSection className="ct-status-cards-top">
-        <Gallery hasGutter 
-          minWidths={{
-            default: "520px", // 데스크탑: 2열 안정 + 카드 크게
-            md: "420px",      // 중간 화면: 2열 유지
-            sm: "320px",      // 작은 화면: 1열로 자연스럽게
-          }}
-          className="ct-system-status">
-          <StorageClusterStatus />
-          <CloudClusterStatus />  
-        </Gallery>
-      </PageSection>
+        if (!isKnownProduct || !isLicenseRegistered || !isClusterPrepared) {
+            return null;
+        }
 
-      {/* 하단 카드 (SystemInfo, Configuration) */}
-      <PageSection isFilled className="ct-status-cards-bottom">
-        <Gallery hasGutter className="ct-system-status">
-          <StorageVmStatus />
-          <CloudVmStatus />
-        </Gallery>
-      </PageSection>
+        const addGfsCards = () => {
+            if (!usesGfs) return;
+            cards.push(<GfsResourceStatus key="gfs-resource" />);
+            cards.push(<GfsDiskStatus key="gfs-disk" />);
+        };
 
-      {/* 하단 카드 (SystemInfo, Configuration) */}
-      <PageSection isFilled>
-        <Gallery hasGutter className="ct-system-status">
-          <GfsResourceStatus />
-          <GfsDiskStatus />
-        </Gallery>
-      </PageSection>
-    </>
-  );
+        if (osType === "ablestack-vm") {
+            cards.push(<GfsResourceStatus key="gfs-resource" />);
+            cards.push(<CloudClusterStatus key="cloud-cluster" />);
+            cards.push(<GfsDiskStatus key="gfs-disk" />);
+            cards.push(<CloudVmStatus key="cloud-vm" />);
+        } else if (osType === "ablestack-standalone") {
+            cards.push(<CloudVmStatus key="cloud-vm" />);
+        } else if (osType === "ablestack-hci-filesystem") {
+            cards.push(<StorageClusterStatus key="storage-cluster" />);
+            cards.push(<CloudClusterStatus key="cloud-cluster" />);
+            cards.push(<StorageVmStatus key="storage-vm" />);
+            cards.push(<CloudVmStatus key="cloud-vm" />);
+            addGfsCards();
+        } else {
+            cards.push(<StorageClusterStatus key="storage-cluster" />);
+            cards.push(<CloudClusterStatus key="cloud-cluster" />);
+            cards.push(<StorageVmStatus key="storage-vm" />);
+            cards.push(<CloudVmStatus key="cloud-vm" />);
+        }
+
+        if (cards.length === 0) {
+            return null;
+        }
+
+        return (
+            <PageSection className="ct-status-context">
+                <Gallery
+                  hasGutter
+                  minWidths={{
+                      default: "520px",
+                      md: "420px",
+                      sm: "320px",
+                  }}
+                  className="ct-system-status"
+                >
+                    {cards}
+                </Gallery>
+            </PageSection>
+        );
+    };
+
+    return (
+        <>
+            <PageSection
+              variant={PageSectionVariants.default}
+              className="ct-status-deploy-overview"
+            >
+                <DeploymentOverview
+                  key={`deploy-overview-${statusRefreshKey}`}
+                  mode="ribbon"
+                  onAction={handleDeployAction}
+                  onOpenDeployRun={() => setIsAllInOneControlOpen(true)}
+                  onStatusChange={setDeployStatus}
+                />
+            </PageSection>
+
+            {actionNotice && (
+                <PageSection
+                  variant={PageSectionVariants.default}
+                  className="ct-status-notice-section"
+                >
+                    <div className="ct-status-action-notice">{actionNotice}</div>
+                </PageSection>
+            )}
+
+            {renderDashboardCards()}
+
+            <ClusterConfigPrepareWizardModal
+              isOpen={isClusterWizardOpen}
+              onClose={() => setIsClusterWizardOpen(false)}
+              onCompleted={refreshDeployOverview}
+            />
+
+            <StorageVmDeployWizardModal
+              isOpen={isStorageVmWizardOpen}
+              onClose={() => setIsStorageVmWizardOpen(false)}
+            />
+
+            <CloudVmDeployWizardModal
+              isOpen={isCloudVmWizardOpen}
+              onClose={() => setIsCloudVmWizardOpen(false)}
+            />
+
+            <MonitoringCenterWizardModal
+              isOpen={isMonitoringWizardOpen}
+              onClose={() => setIsMonitoringWizardOpen(false)}
+            />
+
+            <GfsStorageConfigureWizardModal
+              isOpen={isGfsWizardOpen}
+              onClose={() => setIsGfsWizardOpen(false)}
+            />
+
+            <ConfigFileDownloadModal
+              isOpen={isConfigFileDownloadOpen}
+              onClose={() => setIsConfigFileDownloadOpen(false)}
+            />
+
+            <LicenseManagementModal
+              isOpen={isLicenseManagementOpen}
+              onClose={() => setIsLicenseManagementOpen(false)}
+            />
+
+            <AllInOneControlModal
+              isOpen={isAllInOneControlOpen}
+              onClose={() => setIsAllInOneControlOpen(false)}
+              deployStatus={deployStatus}
+              onStarted={setActionNotice}
+              onCompleted={refreshDeployOverview}
+            />
+
+            <SecurityPatchModal
+              isOpen={isSecurityPatchOpen}
+              onClose={() => setIsSecurityPatchOpen(false)}
+              onCompleted={setActionNotice}
+            />
+
+            <AblestackUpdateModal
+              isOpen={isAblestackUpdateOpen}
+              onClose={() => setIsAblestackUpdateOpen(false)}
+              onCompleted={setActionNotice}
+            />
+        </>
+    );
 }

@@ -14,6 +14,7 @@ interface UseStatusPollingOptions<T> {
     intervalMs?: number;
     onSuccess?: (data: T) => void;
     onError?: (error: unknown) => void;
+    retainPreviousOnError?: boolean;
 }
 
 export function useStatusPolling<T>({
@@ -22,14 +23,17 @@ export function useStatusPolling<T>({
     intervalMs,
     onSuccess,
     onError,
+    retainPreviousOnError = false,
 }: UseStatusPollingOptions<T>) {
     const [data, setData] = React.useState<T>(fallback);
     const [isCollecting, setIsCollecting] = React.useState(false);
+    const [hasResolved, setHasResolved] = React.useState(false);
     const [resolvedIntervalMs, setResolvedIntervalMs] = React.useState<number | null>(
         intervalMs ?? null
     );
     const onSuccessRef = React.useRef(onSuccess);
     const onErrorRef = React.useRef(onError);
+    const hasResolvedRef = React.useRef(false);
 
     React.useEffect(() => {
         if (intervalMs !== undefined) {
@@ -84,11 +88,17 @@ export function useStatusPolling<T>({
                 if (!isActive) return;
 
                 setData(nextData);
+                hasResolvedRef.current = true;
+                setHasResolved(true);
                 onSuccessRef.current?.(nextData);
             } catch (error) {
                 if (!isActive) return;
 
-                setData(fallback);
+                setData((currentData) => (
+                    retainPreviousOnError && hasResolvedRef.current ? currentData : fallback
+                ));
+                hasResolvedRef.current = true;
+                setHasResolved(true);
                 onErrorRef.current?.(error);
             } finally {
                 isFetching = false;
@@ -106,7 +116,7 @@ export function useStatusPolling<T>({
             isActive = false;
             window.clearInterval(intervalId);
         };
-    }, [fetcher, fallback, resolvedIntervalMs]);
+    }, [fetcher, fallback, resolvedIntervalMs, retainPreviousOnError]);
 
-    return { data, isCollecting };
+    return { data, isCollecting, hasResolved };
 }

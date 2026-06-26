@@ -14,7 +14,6 @@ import {
   Checkbox,
   TextInput,
   TextArea,
-  FileUpload,
   FormSelect,
   FormSelectOption,
   Button,
@@ -29,6 +28,9 @@ import {
 import { InfoCircleIcon } from "@patternfly/react-icons";
 
 import ValidationErrorModal from "../components/common/ValidationErrorModal";
+import { fetchClusterConfigProfile } from "../services/api/cluster-config";
+import { fetchNicInventory } from "../services/api/inventory";
+import { fetchCurrentHostname } from "../services/host";
 import "./cloud-vm-deploy-wizard.scss";
 import {
   duplicateMessage,
@@ -44,6 +46,7 @@ import {
 
 type HostsFileMode = "existing" | "new";
 type ClusterType = "ablestack-hci" | "ablestack-vm" | "ablestack-standalone" | "ablestack-hci-filesystem";
+type InventoryLoadState = "idle" | "loading" | "success" | "error";
 
 interface SelectOption {
   value: string;
@@ -76,12 +79,9 @@ const DEFAULT_HOSTS: ClusterHostRow[] = [
 
 const ROOT_DISK = "500 GiB (THIN Provisioning)";
 
-const BRIDGE_OPTIONS: SelectOption[] = [
+const EMPTY_BRIDGE_OPTIONS: SelectOption[] = [
   { value: "", label: "선택하십시오" },
-  { value: "bridge0", label: "TEST!!bridge0 (connected)" },
 ];
-
-const defaultFailoverHosts = () => DEFAULT_HOSTS.map((host) => host.hostPnIp);
 
 export default function CloudVmDeployWizardModal({
   isOpen,
@@ -94,11 +94,16 @@ export default function CloudVmDeployWizardModal({
   const [mgmtBridge, setMgmtBridge] = React.useState("");
   const [svcEnabled, setSvcEnabled] = React.useState(false);
   const [svcBridge, setSvcBridge] = React.useState("");
+  const [bridgeOptions, setBridgeOptions] = React.useState<SelectOption[]>(EMPTY_BRIDGE_OPTIONS);
+  const [nicLoadState, setNicLoadState] = React.useState<InventoryLoadState>("idle");
+  const [nicLoadError, setNicLoadError] = React.useState("");
 
-  const [hostsFileMode, setHostsFileMode] = React.useState<HostsFileMode>("existing");
-  const [currentHostname] = React.useState("");
+  const hostsFileMode: HostsFileMode = "existing";
+  const [currentHostname, setCurrentHostname] = React.useState("");
   const [hostCount, setHostCount] = React.useState(3);
   const [hosts, setHosts] = React.useState<ClusterHostRow[]>(DEFAULT_HOSTS);
+  const [clusterConfigLoadError, setClusterConfigLoadError] = React.useState("");
+  const [clusterConfigLoaded, setClusterConfigLoaded] = React.useState(false);
 
   const [ccvmHostname, setCcvmHostname] = React.useState("ccvm");
   const [mgmtIp, setMgmtIp] = React.useState(""); // 10.10.1.10/16
@@ -110,27 +115,23 @@ export default function CloudVmDeployWizardModal({
   const [svcDns, setSvcDns] = React.useState("");
   const [svcVlan, setSvcVlan] = React.useState("");
 
-  const [sshPrivateKey, setSshPrivateKey] = React.useState("");
-  const [sshPublicKey, setSshPublicKey] = React.useState("");
-  const [sshPrivateFilename, setSshPrivateFilename] = React.useState("");
-  const [sshPublicFilename, setSshPublicFilename] = React.useState("");
-
-  const [failoverMembers, setFailoverMembers] = React.useState(3);
-  const [failoverHosts, setFailoverHosts] = React.useState<string[]>(defaultFailoverHosts);
-
   const [reviewOpen, setReviewOpen] = React.useState({
     appliance: true,
     additional: true,
-    ssh: true,
-    cluster: true,
   });
   const [disableNav, setDisableNav] = React.useState(false);
   const [showDeployConfirm, setShowDeployConfirm] = React.useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
   const [isDeployStarted, setIsDeployStarted] = React.useState(false);
+  const [isDeployFinished, setIsDeployFinished] = React.useState(false);
   const [validationMessage, setValidationMessage] = React.useState("");
   const deployNextStepRef = React.useRef<(() => void) | null>(null);
   const isVmClusterType = clusterType === "ablestack-vm";
+
+  const applyCurrentHostname = React.useCallback((hostname: string) => {
+    if (!hostname) return;
+    setCurrentHostname(hostname);
+  }, []);
 
   const resetState = React.useCallback(() => {
     setClusterSensitivity("5");
@@ -139,9 +140,14 @@ export default function CloudVmDeployWizardModal({
     setMgmtBridge("");
     setSvcEnabled(false);
     setSvcBridge("");
-    setHostsFileMode("existing");
+    setBridgeOptions(EMPTY_BRIDGE_OPTIONS);
+    setNicLoadState("idle");
+    setNicLoadError("");
     setHostCount(3);
     setHosts(DEFAULT_HOSTS);
+    setClusterConfigLoadError("");
+    setClusterConfigLoaded(false);
+    setCurrentHostname("");
     setCcvmHostname("ccvm");
     setMgmtIp(""); // 10.10.1.10/16
     setMgmtGateway("");
@@ -151,19 +157,17 @@ export default function CloudVmDeployWizardModal({
     setSvcGateway("");
     setSvcDns("");
     setSvcVlan("");
-    setSshPrivateKey("");
-    setSshPublicKey("");
-    setSshPrivateFilename("");
-    setSshPublicFilename("");
-    setFailoverMembers(3);
-    setFailoverHosts(defaultFailoverHosts());
-    setReviewOpen({ appliance: true, additional: true, ssh: true, cluster: true });
+    setReviewOpen({ appliance: true, additional: true });
     setDisableNav(false);
     setShowDeployConfirm(false);
     setShowCancelConfirm(false);
     setIsDeployStarted(false);
+    setIsDeployFinished(false);
     setValidationMessage("");
-  }, []);
+    fetchCurrentHostname()
+      .then(applyCurrentHostname)
+      .catch(() => undefined);
+  }, [applyCurrentHostname]);
 
   const handleClose = () => {
     onClose();
@@ -174,15 +178,88 @@ export default function CloudVmDeployWizardModal({
     setShowCancelConfirm(true);
   };
 
-  const resizeFailoverHosts = (nextCount: number) => {
-    setFailoverMembers(nextCount);
-    setFailoverHosts((prev) =>
-      Array.from(
-        { length: nextCount },
-        (_, index) => prev[index] ?? DEFAULT_HOSTS[index]?.hostPnIp ?? ""
-      )
-    );
-  };
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    fetchCurrentHostname()
+      .then(applyCurrentHostname)
+      .catch(() => undefined);
+  }, [applyCurrentHostname, isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    let isActive = true;
+
+    setNicLoadState("loading");
+    setNicLoadError("");
+
+    fetchNicInventory()
+      .then((inventory) => {
+        if (!isActive) return;
+        setBridgeOptions(inventory.bridges.length > 0 ? inventory.bridges : EMPTY_BRIDGE_OPTIONS);
+        setNicLoadState("success");
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setBridgeOptions(EMPTY_BRIDGE_OPTIONS);
+        setNicLoadState("error");
+        setNicLoadError(error instanceof Error ? error.message : "NIC 목록을 불러오지 못했습니다.");
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen || hostsFileMode !== "existing") return;
+
+    let isActive = true;
+    setClusterConfigLoadError("");
+    setClusterConfigLoaded(false);
+
+    fetchClusterConfigProfile()
+      .then((profile) => {
+        if (!isActive) return;
+
+        const profileHosts = profile.hosts
+          .map((host) => ({
+            hostName: host.hostname,
+            hostIp: host.ablecube,
+            ccvmMgmtIp: profile.ccvmIp,
+            hostPnIp: host.ablecubePn,
+            hostCnIp: host.scvmCn,
+          }))
+          .filter((host) => host.hostName || host.hostIp);
+
+        if (profileHosts.length > 0) {
+          setHosts(profileHosts);
+          setHostCount(Math.max(1, profileHosts.length));
+        }
+        setCcvmHostname("ccvm");
+        if (profile.ccvmIp) {
+          setMgmtIp(
+            profile.managementCidr
+              ? `${profile.ccvmIp}/${profile.managementCidr}`
+              : profile.ccvmIp
+          );
+        }
+        if (profile.managementGateway) setMgmtGateway(profile.managementGateway);
+        if (profile.managementDns) setMgmtDns(profile.managementDns);
+        setClusterConfigLoaded(profileHosts.length > 0);
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setClusterConfigLoadError(
+          error instanceof Error ? error.message : "cluster.json 정보를 불러오지 못했습니다."
+        );
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [hostsFileMode, isOpen]);
 
   const updateHostCount = (nextCount: number) => {
     const safeCount = Math.max(3, Math.min(99, nextCount));
@@ -199,7 +276,6 @@ export default function CloudVmDeployWizardModal({
       }));
       return [...prev, ...extras];
     });
-    resizeFailoverHosts(safeCount);
   };
 
   const updateHost = (index: number, key: keyof ClusterHostRow, value: string) => {
@@ -208,35 +284,26 @@ export default function CloudVmDeployWizardModal({
     )));
   };
 
-  const updateFailoverHost = (index: number, value: string) => {
-    setFailoverHosts((prev) => prev.map((host, hostIndex) => (
-      hostIndex === index ? value : host
-    )));
-  };
-
-  const readTextFile = (
-    file: File,
-    setFilename: (filename: string) => void,
-    setText: (text: string) => void
-  ) => {
-    setFilename(file.name);
-    const reader = new FileReader();
-    reader.onload = () => setText(typeof reader.result === "string" ? reader.result : "");
-    reader.readAsText(file);
-  };
-
   const getOptionLabel = (options: SelectOption[], value: string) =>
     options.find((option) => option.value === value)?.label || value || "미입력";
 
   const buildHostsPreview = () => {
     const lines: string[] = [];
-    lines.push(`${mgmtIp.split("/")[0]} ccvm-mngt ccvm`);
+    if (mgmtIp.split("/")[0]) {
+      lines.push(`${mgmtIp.split("/")[0]} ccvm-mngt ccvm`);
+    }
     hosts.slice(0, hostCount).forEach((row, index) => {
       const hostAlias = row.hostName === currentHostname ? "\tablecube" : "";
       const hostIndex = index + 1;
-      lines.push(`${row.hostIp}\t${row.hostName}${hostAlias}`);
-      lines.push(`${row.hostPnIp}\tpn-ablecube${hostIndex}${row.hostName === currentHostname ? "\tpn-ablecube" : ""}`);
-      lines.push(`${row.hostCnIp}\tcn-ablecube${hostIndex}${row.hostName === currentHostname ? "\tcn-ablecube" : ""}`);
+      if (row.hostIp) {
+        lines.push(`${row.hostIp}\t${row.hostName}${hostAlias}`);
+      }
+      if (row.hostPnIp) {
+        lines.push(`${row.hostPnIp}\tpn-ablecube${hostIndex}${row.hostName === currentHostname ? "\tpn-ablecube" : ""}`);
+      }
+      if (row.hostCnIp) {
+        lines.push(`${row.hostCnIp}\tcn-ablecube${hostIndex}${row.hostName === currentHostname ? "\tcn-ablecube" : ""}`);
+      }
     });
     return lines.join("\n");
   };
@@ -246,19 +313,33 @@ export default function CloudVmDeployWizardModal({
   const validateCloudVmDeploy = () => {
     const sensitivity = Number(clusterSensitivity);
     const profileRows = hosts.slice(0, hostCount);
-    const failoverRows = failoverHosts.slice(0, failoverMembers);
 
+    if (hostsFileMode === "existing" && clusterConfigLoadError) {
+      return `cluster.json 정보를 확인해주세요. ${clusterConfigLoadError}`;
+    }
     if (isVmClusterType && (!Number.isFinite(sensitivity) || !isIntegerInRange(clusterSensitivity, 5, 300))) {
       return "클러스터 민감도는 5~300초 범위로 입력해야 합니다.";
     }
     if (!cpu) return "CPU Core를 선택해주세요.";
     if (!memory) return "Memory를 선택해주세요.";
+    if (nicLoadState === "error") return `NIC 정보를 확인해주세요. ${nicLoadError}`;
     if (!mgmtBridge) return "관리네트워크 Bridge를 선택해주세요.";
     if (svcEnabled && !svcBridge) return "서비스네트워크 Bridge를 선택해주세요.";
 
     for (let index = 0; index < profileRows.length; index += 1) {
       const row = profileRows[index];
       const hostLabel = `${index + 1}번 호스트`;
+      if (hostsFileMode === "existing") {
+        if (!row.hostName || !row.hostIp) {
+          return "cluster.json의 호스트 정보를 확인해주세요.";
+        }
+        if (!isHostname(row.hostName)) return `${hostLabel} 호스트명 입력 형식을 확인해주세요.`;
+        if (!isIpv4(row.hostIp)) return `${hostLabel} 호스트 IP 형식을 확인해주세요.`;
+        if (row.ccvmMgmtIp && !isIpv4(row.ccvmMgmtIp)) return `${hostLabel} CCVM 관리 IP 형식을 확인해주세요.`;
+        if (row.hostPnIp && !isIpv4(row.hostPnIp)) return `${hostLabel} HOST PN IP 형식을 확인해주세요.`;
+        if (row.hostCnIp && !isIpv4(row.hostCnIp)) return `${hostLabel} HOST CN IP 형식을 확인해주세요.`;
+        continue;
+      }
       if (!row.hostName || !row.hostIp || !row.ccvmMgmtIp || !row.hostPnIp || !row.hostCnIp) {
         return "클러스터 구성 프로파일의 호스트명/IP 정보를 확인해주세요.";
       }
@@ -290,13 +371,6 @@ export default function CloudVmDeployWizardModal({
       if (svcVlanMessage) return svcVlanMessage;
     }
 
-    if (!isIntegerInRange(failoverMembers, 1, 99)) return "클러스터 멤버수는 1~99 범위로 입력해주세요.";
-    for (let index = 0; index < failoverRows.length; index += 1) {
-      const host = failoverRows[index] ?? "";
-      if (!host.trim()) return "장애조치 클러스터의 PCS 호스트 PN IP를 입력해주세요.";
-      if (!isIpv4(host)) return `PCS 호스트 #${index + 1} PN IP 형식을 확인해주세요.`;
-    }
-
     const duplicateProfileIpMessage = duplicateMessage(
       [
         ...profileRows.flatMap((row) => [row.hostIp, row.hostPnIp, row.hostCnIp]),
@@ -306,8 +380,6 @@ export default function CloudVmDeployWizardModal({
       "중복된 IP가 존재합니다."
     );
     if (duplicateProfileIpMessage) return duplicateProfileIpMessage;
-    const duplicateFailoverMessage = duplicateMessage(failoverRows, "중복된 PCS 호스트 PN IP가 존재합니다.");
-    if (duplicateFailoverMessage) return duplicateFailoverMessage;
     return "";
   };
 
@@ -342,8 +414,14 @@ export default function CloudVmDeployWizardModal({
     if (isDeploy) {
       return (
         <div className="ct-cloud-vm-wizard__footer">
-          <Button variant="primary" onClick={goToNextStep}>
-            다음
+          <Button
+            variant="primary"
+            onClick={() => {
+              setIsDeployFinished(true);
+              goToNextStep();
+            }}
+          >
+            완료
           </Button>
         </div>
       );
@@ -363,7 +441,7 @@ export default function CloudVmDeployWizardModal({
               goToNextStep();
             }}
           >
-            {isReview ? "배포" : "다음"}
+            {isReview ? "구성" : "다음"}
           </Button>
         )}
         {!isFirst && !isFinish && (
@@ -398,7 +476,13 @@ export default function CloudVmDeployWizardModal({
           onSave={handleClose}
           width="100%"
           navAriaLabel="클라우드센터 가상머신 배포 단계"
-          className={disableNav ? "ct-cloud-vm-wizard ct-cloud-vm-wizard--nav-locked" : "ct-cloud-vm-wizard"}
+          isVisitRequired
+          className={[
+              "ct-cloud-vm-wizard",
+              disableNav ? "ct-cloud-vm-wizard--nav-locked" : "",
+              isDeployStarted ? "ct-wizard--execution-visible" : "",
+              isDeployFinished ? "ct-wizard--complete-visible" : "",
+          ].join(" ")}
           footer={wizardFooter}
           onStepChange={(_event, currentStep) => {
             const stepId = String(currentStep.id);
@@ -434,10 +518,10 @@ export default function CloudVmDeployWizardModal({
                   클라우드센터 VM을 배포하기 위해 필요한 정보를 다음과 같이 마법사를 통해 입력받습니다.
                 </Content>
                 <Content component="ul">
-                  <Content component="li">클라우드센터 VM의 HA구성을 위한 클러스터 설정 정보</Content>
+                  <Content component="li">클라우드센터 VM의 HA 구성은 호스트 PN IP 정보를 기준으로 자동 적용됩니다.</Content>
                   <Content component="li">클라우드센터 VM의 CPU, Memory, Disk, Network에 대한 정보</Content>
                   <Content component="li">가상머신의 호스트명 등의 네트워크 정보</Content>
-                  <Content component="li">호스트 및 가상머신 간의 상호 SSH 연결을 위한 SSH Key 정보</Content>
+                  <Content component="li">호스트 및 가상머신 네트워크 연결을 위한 구성 정보</Content>
                 </Content>
                 <Content component="p">
                   필요한 정보를 먼저 준비하십시오. 정보가 준비되었다면 "다음" 버튼을 눌러 클라우드센터 VM 배포를 시작합니다.
@@ -551,6 +635,24 @@ export default function CloudVmDeployWizardModal({
                       아래의 항목에 적합한 값을 선택하여 입력하십시오.
                     </Content>
                   </Content>
+                  {nicLoadState === "loading" && (
+                    <Alert
+                      isInline
+                      variant="info"
+                      title="NIC 목록을 불러오는 중입니다."
+                      className="ct-cloud-vm-wizard__info"
+                    />
+                  )}
+                  {nicLoadState === "error" && (
+                    <Alert
+                      isInline
+                      variant="danger"
+                      title="NIC 목록을 불러오지 못했습니다."
+                      className="ct-cloud-vm-wizard__info"
+                    >
+                      {nicLoadError}
+                    </Alert>
+                  )}
                   <Form className="ct-cloud-vm-wizard__section ct-cloud-vm-wizard__form-horizontal" isHorizontal>
                     <FormGroup label="네트워크 구성" isRequired fieldId="cloud-vm-network-config">
                       <div className="ct-cloud-vm-wizard__stacked-checks">
@@ -574,7 +676,7 @@ export default function CloudVmDeployWizardModal({
                         value={mgmtBridge}
                         onChange={(_event, value) => setMgmtBridge(String(value))}
                       >
-                        {BRIDGE_OPTIONS.map((option) => (
+                        {bridgeOptions.map((option) => (
                           <FormSelectOption key={option.value} value={option.value} label={option.label} />
                         ))}
                       </FormSelect>
@@ -586,7 +688,7 @@ export default function CloudVmDeployWizardModal({
                         onChange={(_event, value) => setSvcBridge(String(value))}
                         isDisabled={!svcEnabled}
                       >
-                        {BRIDGE_OPTIONS.filter((option) => option.value !== "bridge0").map((option) => (
+                        {bridgeOptions.filter((option) => !option.value || option.value !== mgmtBridge).map((option) => (
                           <FormSelectOption key={option.value} value={option.value} label={option.label} />
                         ))}
                       </FormSelect>
@@ -626,15 +728,15 @@ export default function CloudVmDeployWizardModal({
                       id="cloud-vm-hosts-file-existing"
                       name="cloud-vm-hosts-file"
                       label="해당 호스트 파일 사용"
-                      isChecked={hostsFileMode === "existing"}
-                      onChange={() => setHostsFileMode("existing")}
+                      isChecked
+                      isDisabled
                     />
                     <Radio
                       id="cloud-vm-hosts-file-new"
                       name="cloud-vm-hosts-file"
                       label="신규 생성"
-                      isChecked={hostsFileMode === "new"}
-                      onChange={() => setHostsFileMode("new")}
+                      isChecked={false}
+                      isDisabled
                     />
                   </div>
                 </FormGroup>
@@ -663,6 +765,21 @@ export default function CloudVmDeployWizardModal({
                     <span className="ct-cloud-vm-wizard__stepper-unit">대</span>
                   </div>
                 </FormGroup>
+
+                {hostsFileMode === "existing" && (
+                  <Alert
+                    isInline
+                    title={
+                      clusterConfigLoadError
+                        ? "cluster.json 정보를 불러오지 못했습니다."
+                        : clusterConfigLoaded
+                          ? "cluster.json의 호스트 정보를 자동으로 적용했습니다."
+                          : "cluster.json 정보를 불러오는 중입니다."
+                    }
+                    variant={clusterConfigLoadError ? "warning" : "info"}
+                    className="ct-cloud-vm-wizard__info"
+                  />
+                )}
               </Form>
 
               <div className="ct-cloud-vm-wizard__table-wrap">
@@ -733,6 +850,7 @@ export default function CloudVmDeployWizardModal({
                   <TextInput
                     id="cloud-vm-hostname"
                     value={ccvmHostname}
+                    isDisabled={hostsFileMode === "existing"}
                     onChange={(_event, value) => setCcvmHostname(value)}
                   />
                 </FormGroup>
@@ -741,6 +859,7 @@ export default function CloudVmDeployWizardModal({
                     id="cloud-vm-mgmt-ip"
                     value={mgmtIp}
                     placeholder="xxx.xxx.xxx.xxx/xx 형식으로 입력"
+                    isDisabled={hostsFileMode === "existing"}
                     onChange={(_event, value) => setMgmtIp(value)}
                   />
                 </FormGroup>
@@ -749,6 +868,7 @@ export default function CloudVmDeployWizardModal({
                     id="cloud-vm-mgmt-gw"
                     value={mgmtGateway}
                     placeholder="xxx.xxx.xxx.xxx 형식으로 입력"
+                    isDisabled={hostsFileMode === "existing"}
                     onChange={(_event, value) => setMgmtGateway(value)}
                   />
                 </FormGroup>
@@ -757,6 +877,7 @@ export default function CloudVmDeployWizardModal({
                     id="cloud-vm-mgmt-dns"
                     value={mgmtDns}
                     placeholder="xxx.xxx.xxx.xxx 형식으로 입력"
+                    isDisabled={hostsFileMode === "existing"}
                     onChange={(_event, value) => setMgmtDns(value)}
                   />
                 </FormGroup>
@@ -803,109 +924,6 @@ export default function CloudVmDeployWizardModal({
                   />
                 </FormGroup>
               </Form>
-            </div>
-          </WizardStep>
-
-          <WizardStep name="SSH Key 정보" id="cloud-vm-ssh">
-            <div className="ct-cloud-vm-wizard__content">
-              <Content>
-                <Content component="p">
-                  클라우드센터 VM과 호스트, 그리고 ABLESTACK을 구성하고 있는 가상머신들과의 SSH 연결을 위해 SSH Key를 설정합니다.
-                  기본적으로 현재 호스트의 SSH Key 파일을 자동으로 등록하며, 필요시 다운로드 한 SSH Key 파일로 등록 가능합니다.
-                </Content>
-              </Content>
-              <Form className="ct-cloud-vm-wizard__section ct-cloud-vm-wizard__form-horizontal" isHorizontal>
-                <FormGroup label="SSH 개인 Key 파일" isRequired fieldId="cloud-vm-ssh-private">
-                  <FileUpload
-                    id="cloud-vm-ssh-private-file"
-                    type="text"
-                    value=""
-                    filename={sshPrivateFilename}
-                    filenamePlaceholder="현재 호스트 id_rsa 자동 사용 또는 파일 선택"
-                    onFileInputChange={(_, file) => readTextFile(file, setSshPrivateFilename, setSshPrivateKey)}
-                    hideDefaultPreview
-                  />
-                  <TextArea
-                    aria-label="SSH 개인 Key 미리보기"
-                    className="ct-cloud-vm-wizard__file-preview"
-                    value={sshPrivateKey || "현재 호스트 SSH 개인 Key 파일을 자동으로 사용합니다."}
-                    rows={4}
-                    readOnly
-                  />
-                </FormGroup>
-                <FormGroup label="SSH 공개 Key 파일" isRequired fieldId="cloud-vm-ssh-public">
-                  <FileUpload
-                    id="cloud-vm-ssh-public-file"
-                    type="text"
-                    value=""
-                    filename={sshPublicFilename}
-                    filenamePlaceholder="현재 호스트 id_rsa.pub 자동 사용 또는 파일 선택"
-                    onFileInputChange={(_, file) => readTextFile(file, setSshPublicFilename, setSshPublicKey)}
-                    hideDefaultPreview
-                  />
-                  <TextArea
-                    aria-label="SSH 공개 Key 미리보기"
-                    className="ct-cloud-vm-wizard__file-preview"
-                    value={sshPublicKey || "현재 호스트 SSH 공개 Key 파일을 자동으로 사용합니다."}
-                    rows={3}
-                    readOnly
-                  />
-                </FormGroup>
-              </Form>
-              <Alert
-                isInline
-                title="SSH Key 등록 참고사항"
-                variant="info"
-                icon={<InfoCircleIcon />}
-                className="ct-cloud-vm-wizard__info"
-              >
-                <Content component="p">
-                  SSH Key는 호스트 및 클라우드센터, 스토리지센터 가상머신 등의 ABLESTACK 구성요소 간의 암호화된 인증을 위해 사용됩니다.
-                </Content>
-                <Content component="p">
-                  호스트 간, 가상머신 간의 모든 명령은 SSH를 이용해 전달되며 이 때 SSH Key를 이용해 인증을 처리합니다.
-                  따라서 모든 호스트, 가상머신은 동일한 SSH Key를 사용해야 합니다.
-                </Content>
-              </Alert>
-            </div>
-          </WizardStep>
-
-          <WizardStep name="장애조치 클러스터 설정" id="cloud-vm-failover">
-            <div className="ct-cloud-vm-wizard__content">
-              <Content>
-                <Content component="p">
-                  장애조치 클러스터는 클라우드센터 VM이 실행 중인 호스트에 장애가 발생하는 경우 클라우드센터 VM을 안전하게 다른 호스트에서 실행하도록 하기 위해 구성합니다.
-                  장애조치 클러스터를 구성하기 위해 필요한 정보를 아래에 입력하십시오.
-                </Content>
-              </Content>
-              <Form className="ct-cloud-vm-wizard__section ct-cloud-vm-wizard__form-horizontal" isHorizontal>
-                <FormGroup label="클러스터 멤버수" isRequired fieldId="cloud-vm-failover-members">
-                  <TextInput
-                    id="cloud-vm-failover-members"
-                    value={String(failoverMembers)}
-                    onChange={(_event, value) => resizeFailoverHosts(Math.max(1, Math.min(99, Number(value) || 1)))}
-                    type="number"
-                  />
-                </FormGroup>
-              </Form>
-
-              <div className="ct-cloud-vm-wizard__failover-list">
-                {failoverHosts.slice(0, failoverMembers).map((host, index) => (
-                  <div className="ct-cloud-vm-wizard__field-group" key={`cloud-vm-failover-host-${index}`}>
-                    <div className="ct-cloud-vm-wizard__field-group-title">PCS 호스트 #{index + 1} 정보</div>
-                    <Form className="ct-cloud-vm-wizard__form-horizontal" isHorizontal>
-                      <FormGroup label="PN IP" isRequired fieldId={`cloud-vm-failover-host-${index}`}>
-                        <TextInput
-                          id={`cloud-vm-failover-host-${index}`}
-                          value={host}
-                          placeholder="xxx.xxx.xxx.xxx 형식으로 입력"
-                          onChange={(_event, value) => updateFailoverHost(index, value)}
-                        />
-                      </FormGroup>
-                    </Form>
-                  </div>
-                ))}
-              </div>
             </div>
           </WizardStep>
 
@@ -959,13 +977,13 @@ export default function CloudVmDeployWizardModal({
                         <DescriptionListGroup>
                           <DescriptionListTerm>관리용 Bridge</DescriptionListTerm>
                           <DescriptionListDescription>
-                            관리 네트워크 : {getOptionLabel(BRIDGE_OPTIONS, mgmtBridge)}
+                            관리 네트워크 : {getOptionLabel(bridgeOptions, mgmtBridge)}
                           </DescriptionListDescription>
                         </DescriptionListGroup>
                         <DescriptionListGroup>
                           <DescriptionListTerm>서비스용 Bridge</DescriptionListTerm>
                           <DescriptionListDescription>
-                            {svcEnabled ? getOptionLabel(BRIDGE_OPTIONS, svcBridge) : "N/A"}
+                            {svcEnabled ? getOptionLabel(bridgeOptions, svcBridge) : "N/A"}
                           </DescriptionListDescription>
                         </DescriptionListGroup>
                       </DescriptionList>
@@ -990,7 +1008,7 @@ export default function CloudVmDeployWizardModal({
                         <DescriptionListGroup>
                           <DescriptionListTerm>클러스터 구성 준비</DescriptionListTerm>
                           <DescriptionListDescription>
-                            {hostsFileMode === "existing" ? "해당 호스트 파일 사용" : "신규 생성"}
+                            해당 호스트 파일 사용
                           </DescriptionListDescription>
                         </DescriptionListGroup>
                         <DescriptionListGroup>
@@ -1034,82 +1052,11 @@ export default function CloudVmDeployWizardModal({
                   )}
                 </div>
 
-                <div className="ct-cloud-vm-wizard__review-section">
-                  <button
-                    type="button"
-                    className="ct-cloud-vm-wizard__review-header"
-                    onClick={() => setReviewOpen((prev) => ({ ...prev, ssh: !prev.ssh }))}
-                  >
-                    <span>SSH Key 정보</span>
-                    <span className={reviewOpen.ssh ? "ct-cloud-chevron ct-cloud-chevron--open" : "ct-cloud-chevron"}>
-                      ▾
-                    </span>
-                  </button>
-                  {reviewOpen.ssh && (
-                    <div className="ct-cloud-vm-wizard__review-body">
-                      <DescriptionList isCompact className="ct-cloud-vm-wizard__review-detail">
-                        <DescriptionListGroup>
-                          <DescriptionListTerm>SSH 개인 Key 파일</DescriptionListTerm>
-                          <DescriptionListDescription>
-                            <TextArea
-                              aria-label="SSH 개인 Key 설정 확인"
-                              readOnly
-                              value={sshPrivateKey || sshPrivateFilename || "현재 호스트 id_rsa 자동 사용"}
-                              rows={5}
-                              className="ct-cloud-vm-wizard__review-textarea"
-                            />
-                          </DescriptionListDescription>
-                        </DescriptionListGroup>
-                        <DescriptionListGroup>
-                          <DescriptionListTerm>SSH 공개 Key 파일</DescriptionListTerm>
-                          <DescriptionListDescription>
-                            <TextArea
-                              aria-label="SSH 공개 Key 설정 확인"
-                              readOnly
-                              value={sshPublicKey || sshPublicFilename || "현재 호스트 id_rsa.pub 자동 사용"}
-                              rows={4}
-                              className="ct-cloud-vm-wizard__review-textarea"
-                            />
-                          </DescriptionListDescription>
-                        </DescriptionListGroup>
-                      </DescriptionList>
-                    </div>
-                  )}
-                </div>
-
-                <div className="ct-cloud-vm-wizard__review-section">
-                  <button
-                    type="button"
-                    className="ct-cloud-vm-wizard__review-header"
-                    onClick={() => setReviewOpen((prev) => ({ ...prev, cluster: !prev.cluster }))}
-                  >
-                    <span>장애조치 클러스터 설정</span>
-                    <span className={reviewOpen.cluster ? "ct-cloud-chevron ct-cloud-chevron--open" : "ct-cloud-chevron"}>
-                      ▾
-                    </span>
-                  </button>
-                  {reviewOpen.cluster && (
-                    <div className="ct-cloud-vm-wizard__review-body">
-                      <DescriptionList isCompact className="ct-cloud-vm-wizard__review-detail">
-                        <DescriptionListGroup>
-                          <DescriptionListTerm>클러스터 멤버 수</DescriptionListTerm>
-                          <DescriptionListDescription>{failoverMembers}</DescriptionListDescription>
-                        </DescriptionListGroup>
-                        {failoverHosts.slice(0, failoverMembers).map((host, index) => (
-                          <DescriptionListGroup key={`cloud-vm-failover-review-${index}`}>
-                            <DescriptionListTerm>PCS 호스트 #{index + 1}</DescriptionListTerm>
-                            <DescriptionListDescription>PN IP : {host || "미입력"}</DescriptionListDescription>
-                          </DescriptionListGroup>
-                        ))}
-                      </DescriptionList>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           </WizardStep>
 
-          <WizardStep name="배포" id="cloud-vm-deploy">
+          <WizardStep name="구성" id="cloud-vm-deploy">
             <div className="ct-cloud-vm-wizard__content">
               <Content component="p" className="ct-cloud-vm-wizard__deploy-title">
                 클라우드센터 가상머신을 배포 중입니다. 전체 5단계 중 4단계 진행 중입니다.

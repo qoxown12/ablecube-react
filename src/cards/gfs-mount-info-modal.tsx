@@ -23,6 +23,10 @@ export interface GfsMountInfo {
   physicalVolume: string;
   volumeGroup: string;
   diskSize: string;
+  totalCapacity?: string;
+  usedCapacity?: string;
+  availableCapacity?: string;
+  usagePercentage?: string;
   resourceStatus: string[];
 }
 
@@ -81,7 +85,9 @@ export default function GfsMountInfoModal({
     ["마운트 경로", mountInfo.mountPath],
     ["물리 볼륨", `${renderValue(mountInfo.devices)} ( ${renderValue(mountInfo.multipaths)} )`],
     ["볼륨 그룹", mountInfo.volumeGroup || mountInfo.physicalVolume],
-    ["디스크 크기", mountInfo.diskSize],
+    ["스토리지 용량", mountInfo.totalCapacity || mountInfo.diskSize],
+    ["사용량", `${renderValue(mountInfo.usedCapacity)} / ${renderValue(mountInfo.usagePercentage)}`],
+    ["사용 가능 용량", mountInfo.availableCapacity],
   ];
   const status = statusMeta(mountInfo.status);
   const resourceStatus = mountInfo.resourceStatus.filter((line) => line && line !== "N/A");

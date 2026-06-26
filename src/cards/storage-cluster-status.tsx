@@ -5,26 +5,14 @@ import {
   CardTitle,
   CardBody,
   CardFooter,
-  Label,
   Button,
-  Flex,
-  FlexItem,
-  DescriptionList,
-  DescriptionListGroup,
-  DescriptionListTerm,
-  DescriptionListDescription,
   Dropdown,
+  DropdownGroup,
   DropdownList,
   DropdownItem,
   MenuToggle,
 } from "@patternfly/react-core";
 import {
-  CubesIcon,
-  InfoCircleIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  ExclamationCircleIcon,
-  EllipsisVIcon,
   SearchIcon,
 } from "@patternfly/react-icons";
 
@@ -34,7 +22,6 @@ import StorageClusterHealthChecksModal from "./storage-cluster-health-checks-mod
 import {
   STATUS_LOADING_LABEL,
   STATUS_UNKNOWN_LABEL,
-  StatusLoadingIcon,
   StatusLoadingMessage,
 } from "./status-loading";
 import WwnListModal from "./wwn-list-modal";
@@ -46,30 +33,39 @@ import ActionProgressModal from "../components/common/ActionProgressModal";
 import type { ActionProgressPhase } from "../components/common/ActionProgressModal";
 import { useStatusPolling } from "../hooks/useStatusPolling";
 import {
-  fetchStorageCenterUrl,
   fetchStorageClusterStatus,
   STORAGE_CLUSTER_STATUS_FALLBACK,
   type StorageClusterStatusData,
   updateGlueConfigAllHosts,
   updateStorageClusterMaintenanceMode,
 } from "../services/api/storage-cluster-status";
+import {
+  formatMultipathSyncAction,
+  runMultipathSync,
+  summarizeMultipathSyncResult,
+  type MultipathSyncAction,
+} from "../services/api/multipath-sync";
+import {
+  DotStatus,
+  InfoGrid,
+  InfoItem,
+  StatusCardHeading,
+  StorageCapacitySummary,
+} from "./status-card-layout";
 import "./status-card.scss";
 
 const CLUSTER_STATUS_META = {
   HEALTH_OK: {
     label: "Health OK",
     color: "green",
-    icon: <CheckCircleIcon />,
   },
   HEALTH_WARN: {
     label: "Health Warn",
     color: "orange",
-    icon: <ExclamationTriangleIcon />,
   },
   HEALTH_ERR: {
     label: "Health Err",
     color: "red",
-    icon: <ExclamationCircleIcon />,
   },
 };
 
@@ -96,6 +92,17 @@ export default function StorageClusterStatus() {
     phase: "running",
     message: "",
   });
+  const [multipathProgress, setMultipathProgress] = React.useState<{
+    isOpen: boolean;
+    title: string;
+    phase: ActionProgressPhase;
+    message: string;
+  }>({
+    isOpen: false,
+    title: "외부 스토리지 동기화",
+    phase: "running",
+    message: "",
+  });
   const [isGlueUpdateModalOpen, setIsGlueUpdateModalOpen] = React.useState(false);
   const [isExternalStorageSyncModalOpen, setIsExternalStorageSyncModalOpen] = React.useState(false);
   const [isExternalStorageRescanModalOpen, setIsExternalStorageRescanModalOpen] = React.useState(false);
@@ -104,7 +111,6 @@ export default function StorageClusterStatus() {
   const [isAutoShutdownModalOpen, setIsAutoShutdownModalOpen] = React.useState(false);
   const [isRemoveCubeHostModalOpen, setIsRemoveCubeHostModalOpen] = React.useState(false);
   const [isHealthChecksModalOpen, setIsHealthChecksModalOpen] = React.useState(false);
-  const [storageCenterConnectionError, setStorageCenterConnectionError] = React.useState("");
 
   const handleStatusLoad = React.useCallback((nextData: StorageClusterStatusData) => {
     setIsMaintenance(nextData.maintenanceStatus);
@@ -124,12 +130,10 @@ export default function StorageClusterStatus() {
     ? {
       label: STATUS_LOADING_LABEL,
       color: "orange",
-      icon: <StatusLoadingIcon />,
     }
     : (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
       label: STATUS_UNKNOWN_LABEL,
       color: "orange",
-      icon: <InfoCircleIcon />,
     };
 
   const isClusterError = data.clusterStatus === "HEALTH_ERR";
@@ -137,7 +141,7 @@ export default function StorageClusterStatus() {
   const canOpenHealthChecks =
     !isCollecting && !isClusterUnknown && data.clusterStatus !== "HEALTH_OK";
   const footerMessage = isCollecting
-    ? "스토리지센터 클러스터 상태 체크 중..."
+    ? "스토리지센터 클러스터 상태를 확인하고 있습니다."
     : isClusterUnknown
     ? "스토리지센터 클러스터 상태 정보를 확인할 수 없습니다."
     : isClusterError
@@ -203,35 +207,6 @@ export default function StorageClusterStatus() {
     setIsOpen(false);
   };
 
-  const openStorageCenter = async () => {
-    setIsOpen(false);
-
-    const storageCenterWindow = window.open("about:blank", "_blank");
-
-    if (!storageCenterWindow) {
-      setStorageCenterConnectionError("브라우저 팝업 차단을 해제한 후 다시 시도해주세요.");
-      return;
-    }
-
-    try {
-      storageCenterWindow.document.title = "스토리지센터 연결";
-      storageCenterWindow.document.body.textContent = "스토리지센터 주소를 확인하는 중입니다.";
-
-      const storageCenterUrl = await fetchStorageCenterUrl();
-
-      storageCenterWindow.opener = null;
-      storageCenterWindow.location.href = storageCenterUrl;
-    } catch (error) {
-      storageCenterWindow.close();
-      console.error("storage center url API error:", error);
-      setStorageCenterConnectionError(
-        error instanceof Error
-          ? error.message
-          : "스토리지센터 연결 주소 조회에 실패했습니다."
-      );
-    }
-  };
-
   const closeGlueUpdateModal = () => {
     setIsGlueUpdateModalOpen(false);
   };
@@ -276,9 +251,45 @@ export default function StorageClusterStatus() {
     setIsExternalStorageSyncModalOpen(false);
   };
 
+  const runExternalStorageAction = async (action: MultipathSyncAction) => {
+    const title = formatMultipathSyncAction(action);
+
+    setMultipathProgress({
+      isOpen: true,
+      title,
+      phase: "running",
+      message: `${title}을 실행하고 있습니다.`,
+    });
+
+    try {
+      const result = await runMultipathSync(action);
+
+      setMultipathProgress({
+        isOpen: true,
+        title,
+        phase: "success",
+        message: summarizeMultipathSyncResult(result, `${title}이 완료되었습니다.`),
+      });
+    } catch (error) {
+      console.error("multipath sync API error:", error);
+      setMultipathProgress({
+        isOpen: true,
+        title,
+        phase: "error",
+        message: error instanceof Error
+          ? error.message
+          : `${title}에 실패했습니다.`,
+      });
+    }
+  };
+
+  const closeMultipathProgressModal = () => {
+    setMultipathProgress((prev) => ({ ...prev, isOpen: false }));
+  };
+
   const confirmExternalStorageSync = () => {
-    // TODO: 백엔드 API 전환 후 shell/host/multipath_sync.sh sync 호출로 연결합니다.
     setIsExternalStorageSyncModalOpen(false);
+    void runExternalStorageAction("sync");
   };
 
   const openExternalStorageRescanModal = () => {
@@ -291,8 +302,8 @@ export default function StorageClusterStatus() {
   };
 
   const confirmExternalStorageRescan = () => {
-    // TODO: 백엔드 API 전환 후 shell/host/multipath_sync.sh rescan 호출로 연결합니다.
     setIsExternalStorageRescanModalOpen(false);
+    void runExternalStorageAction("rescan");
   };
 
   const openClvmDiskActionModal = (action: ClvmDiskAction) => {
@@ -351,10 +362,6 @@ export default function StorageClusterStatus() {
     setIsHealthChecksModalOpen(false);
   };
 
-  const closeStorageCenterConnectionError = () => {
-    setStorageCenterConnectionError("");
-  };
-
   return (
     <Card className="ct-status-card">
       <CardHeader
@@ -362,6 +369,7 @@ export default function StorageClusterStatus() {
         actions={{
           actions: (
             <Dropdown
+              className="ct-status-card__dropdown"
               isOpen={isOpen}
               onSelect={onSelect}
               onOpenChange={setIsOpen}
@@ -370,115 +378,113 @@ export default function StorageClusterStatus() {
                 <MenuToggle
                   ref={toggleRef}
                   variant="plain"
-                  aria-label="카드 메뉴"
+                  aria-expanded={isOpen}
+                  aria-label={isOpen ? "카드 메뉴 닫기" : "카드 메뉴 열기"}
                   onClick={() => setIsOpen(!isOpen)}
                 >
-                  <EllipsisVIcon />
+                  <span
+                    className={`ct-status-card__menu-arrow${isOpen ? " ct-status-card__menu-arrow--open" : ""}`}
+                    aria-hidden="true"
+                  />
                 </MenuToggle>
               )}
             >
               <DropdownList>
-                <DropdownItem
-                  isDisabled={isMaintenance}
-                  onClick={() => openMaintenanceModeModal("set")}
-                >
-                  유지보수 모드 설정
-                </DropdownItem>
+                <DropdownGroup label="운영 모드" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={isMaintenance}
+                    onClick={() => openMaintenanceModeModal("set")}
+                  >
+                    유지보수 모드 설정
+                  </DropdownItem>
 
-                <DropdownItem
-                  isDisabled={!isMaintenance}
-                  onClick={() => openMaintenanceModeModal("unset")}
-                >
-                  유지보수 모드 해제
-                </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isMaintenance}
+                    onClick={() => openMaintenanceModeModal("unset")}
+                  >
+                    유지보수 모드 해제
+                  </DropdownItem>
+                </DropdownGroup>
 
-                <DropdownItem
-                  onClick={openStorageCenter}
-                >
-                  스토리지센터 연결
-                </DropdownItem>
+                <DropdownGroup label="구성" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    onClick={openGlueUpdateModal}
+                  >
+                    전체 호스트 Glue 설정 업데이트
+                  </DropdownItem>
+                </DropdownGroup>
 
-                <DropdownItem
-                  onClick={openGlueUpdateModal}
-                >
-                  전체 호스트 Glue 설정 업데이트
-                </DropdownItem>
-                
-                <DropdownItem
-                  onClick={openExternalStorageSyncModal}
-                >
-                  외부 스토리지 동기화
-                </DropdownItem>
+                <DropdownGroup label="외부 스토리지" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    onClick={openExternalStorageSyncModal}
+                  >
+                    외부 스토리지 동기화
+                  </DropdownItem>
 
-                <DropdownItem
-                  onClick={openExternalStorageRescanModal}
-                >
-                  외부 스토리지 재검색
-                </DropdownItem>
+                  <DropdownItem
+                    onClick={openExternalStorageRescanModal}
+                  >
+                    외부 스토리지 재검색
+                  </DropdownItem>
+                </DropdownGroup>
 
-                <DropdownItem
-                  onClick={() => openClvmDiskActionModal("add")}
-                >
-                  CLVM 디스크 추가
-                </DropdownItem>
-                <DropdownItem
-                  onClick={() => openClvmDiskActionModal("delete")}
-                >
-                  CLVM 디스크 삭제
-                </DropdownItem>
-                <DropdownItem
-                  onClick={() => openClvmDiskActionModal("info")}
-                >
-                  CLVM 디스크 정보
-                </DropdownItem>
-                <DropdownItem
-                  onClick={openWwnListModal}
-                >
-                  WWN 목록 조회
-                </DropdownItem>
-                <DropdownItem
-                  onClick={openAutoShutdownModal}
-                >
-                  전체 시스템 자동 종료
-                </DropdownItem>
-                <DropdownItem
-                  onClick={openRemoveCubeHostModal}
-                >
-                  Cube 호스트 제거
-                </DropdownItem>
+                <DropdownGroup label="디스크 / WWN" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    onClick={() => openClvmDiskActionModal("add")}
+                  >
+                    CLVM 디스크 추가
+                  </DropdownItem>
+                  <DropdownItem
+                    onClick={() => openClvmDiskActionModal("delete")}
+                  >
+                    CLVM 디스크 삭제
+                  </DropdownItem>
+                  <DropdownItem
+                    onClick={() => openClvmDiskActionModal("info")}
+                  >
+                    CLVM 디스크 정보
+                  </DropdownItem>
+                  <DropdownItem
+                    onClick={openWwnListModal}
+                  >
+                    WWN 목록 조회
+                  </DropdownItem>
+                </DropdownGroup>
+
+                <DropdownGroup label="시스템 관리" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    onClick={openAutoShutdownModal}
+                  >
+                    전체 시스템 자동 종료
+                  </DropdownItem>
+                  <DropdownItem
+                    onClick={openRemoveCubeHostModal}
+                  >
+                    Cube 호스트 제거
+                  </DropdownItem>
+                </DropdownGroup>
               </DropdownList>
             </Dropdown>
           ),
         }}
       >
-        <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-          <FlexItem>
-            <CardTitle>
-              <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-                <CubesIcon
-                  style={{ fontSize: "var(--pf-global--icon--FontSize--lg)" }}
-                  aria-hidden="true"
-                />
-                <span>스토리지센터 클러스터 상태</span>
-              </Flex>
-            </CardTitle>
-          </FlexItem>
-        </Flex>
+        <CardTitle>
+          <StatusCardHeading
+            icon={<span className="ct-status-card__emoji" aria-hidden="true">🗄</span>}
+            title="스토리지센터 클러스터 상태"
+            subtitle="Glue Cluster"
+            tone="storage"
+          />
+        </CardTitle>
       </CardHeader>
 
       <CardBody>
-        <DescriptionList isCompact className="ct-status-card__dl">
-          <DescriptionListGroup>
-            <DescriptionListTerm>클러스터 상태</DescriptionListTerm>
-            <DescriptionListDescription>
+        <InfoGrid>
+          <InfoItem label="클러스터 상태">
               <span className="ct-health-status">
-                <Label
-                  className="ct-health-label"
-                  color={statusMeta.color}
-                  icon={statusMeta.icon}
-                >
+                <DotStatus tone={statusMeta.color}>
                   {statusMeta.label}
-                </Label>
+                </DotStatus>
                 {canOpenHealthChecks ? (
                   <Button
                     variant="plain"
@@ -490,34 +496,20 @@ export default function StorageClusterStatus() {
                   </Button>
                 ) : null}
               </span>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
+          </InfoItem>
+          <InfoItem label="스토리지 풀">{data.storagePools}</InfoItem>
+          <InfoItem label="게이트웨이" full>{data.gatewayStatus}</InfoItem>
+          <InfoItem label="관리데몬" full>{data.daemonStatus}</InfoItem>
+          <InfoItem label="디스크" full>{data.diskStatus}</InfoItem>
+        </InfoGrid>
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>디스크</DescriptionListTerm>
-            <DescriptionListDescription>{data.diskStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>게이트웨이</DescriptionListTerm>
-            <DescriptionListDescription>{data.gatewayStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>관리데몬</DescriptionListTerm>
-            <DescriptionListDescription>{data.daemonStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>스토리지 풀</DescriptionListTerm>
-            <DescriptionListDescription>{data.storagePools}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>스토리지 용량</DescriptionListTerm>
-            <DescriptionListDescription>{data.storageCapacity}</DescriptionListDescription>
-          </DescriptionListGroup>
-        </DescriptionList>
+        <StorageCapacitySummary
+          total={data.storageTotalCapacity}
+          usable={data.storageUsableCapacity}
+          available={data.storageAvailableCapacity}
+          used={data.storageUsedCapacity}
+          usagePercentage={data.storageUsagePercentage}
+        />
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>
@@ -546,14 +538,6 @@ export default function StorageClusterStatus() {
         isOpen={isHealthChecksModalOpen}
         checks={data.healthChecks}
         onClose={closeHealthChecksModal}
-      />
-
-      <ActionProgressModal
-        isOpen={Boolean(storageCenterConnectionError)}
-        title="스토리지센터 연결"
-        phase="error"
-        message={storageCenterConnectionError}
-        onClose={closeStorageCenterConnectionError}
       />
 
       <ConfirmActionModal
@@ -590,6 +574,14 @@ export default function StorageClusterStatus() {
         checkLabel="외부 스토리지 연결 확인"
         onClose={closeExternalStorageRescanModal}
         onConfirm={confirmExternalStorageRescan}
+      />
+
+      <ActionProgressModal
+        isOpen={multipathProgress.isOpen}
+        title={multipathProgress.title}
+        phase={multipathProgress.phase}
+        message={multipathProgress.message}
+        onClose={closeMultipathProgressModal}
       />
 
       <ClvmDiskActionModal

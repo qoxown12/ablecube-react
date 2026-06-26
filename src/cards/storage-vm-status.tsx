@@ -5,31 +5,15 @@ import {
   CardTitle,
   CardBody,
   CardFooter,
-  Label,
-  Flex,
-  FlexItem,
-  DescriptionList,
-  DescriptionListGroup,
-  DescriptionListTerm,
-  DescriptionListDescription,
   Dropdown,
+  DropdownGroup,
   DropdownList,
   DropdownItem,
   MenuToggle,
 } from "@patternfly/react-core";
 import {
-  VirtualMachineIcon,
-  InfoCircleIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  ExclamationCircleIcon,
-  EllipsisVIcon,
-} from "@patternfly/react-icons";
-
-import {
   STATUS_LOADING_LABEL,
   STATUS_UNKNOWN_LABEL,
-  StatusLoadingIcon,
   StatusLoadingMessage,
 } from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
@@ -39,27 +23,37 @@ import {
   fetchStorageVmStatus,
   STORAGE_VM_STATUS_FALLBACK,
 } from "../services/api/storage-vm-status";
+import {
+  CardDivider,
+  compactDiskUsage,
+  DotStatus,
+  InfoGrid,
+  InfoItem,
+  NicGroup,
+  nicName,
+  statusIpWithPrefix,
+  StatusCardHeading,
+  stripStatusLabel,
+  UsageProgress,
+} from "./status-card-layout";
 import "./status-card.scss";
 
 const VM_STATUS_META = {
   running: {
     label: "Running",
     color: "green",
-    icon: <CheckCircleIcon />,
   },
   shutOff: {
     label: "Stopped",
     color: "orange",
-    icon: <ExclamationTriangleIcon />,
   },
   HEALTH_ERR: {
     label: "Health Err",
     color: "red",
-    icon: <ExclamationCircleIcon />,
   },
 };
 
-type StorageVmAction = "start" | "stop" | "delete" | "connect";
+type StorageVmAction = "start" | "stop" | "delete";
 
 const STORAGE_VM_ACTIONS: Record<StorageVmAction, { title: string; message: string; confirmLabel?: string }> = {
   start: {
@@ -76,11 +70,6 @@ const STORAGE_VM_ACTIONS: Record<StorageVmAction, { title: string; message: stri
     title: "스토리지 센터 가상머신 상태 변경",
     message: "스토리지 센터 가상머신을 '삭제' 하시겠습니까?",
     confirmLabel: "삭제",
-  },
-  connect: {
-    title: "스토리지센터VM 연결",
-    message: "스토리지센터VM 관리 화면으로 연결하시겠습니까?",
-    confirmLabel: "연결",
   },
 };
 
@@ -102,18 +91,16 @@ export default function StorageVmStatus() {
     ? {
       label: STATUS_LOADING_LABEL,
       color: "orange",
-      icon: <StatusLoadingIcon />,
     }
     : (VM_STATUS_META as any)[data.vmStatus] ?? {
       label: STATUS_UNKNOWN_LABEL,
       color: "orange",
-      icon: <InfoCircleIcon />,
     };
 
   const isVmError = data.vmStatus === "HEALTH_ERR";
   const isVmUnknown = data.vmStatus === "N/A" || data.vmStatus === "";
   const footerMessage = isCollecting
-    ? "스토리지센터 가상머신 상태 체크 중..."
+    ? "스토리지센터 가상머신 상태를 확인하고 있습니다."
     : isVmUnknown
     ? "스토리지센터 가상머신 상태 정보를 확인할 수 없습니다."
     : isVmError
@@ -164,6 +151,7 @@ export default function StorageVmStatus() {
         actions={{
           actions: (
             <Dropdown
+              className="ct-status-card__dropdown"
               isOpen={isOpen}
               onSelect={onSelect}
               onOpenChange={setIsOpen}
@@ -172,119 +160,107 @@ export default function StorageVmStatus() {
                 <MenuToggle
                   ref={toggleRef}
                   variant="plain"
-                  aria-label="카드 메뉴"
+                  aria-expanded={isOpen}
+                  aria-label={isOpen ? "카드 메뉴 닫기" : "카드 메뉴 열기"}
                   onClick={() => setIsOpen(!isOpen)}
                 >
-                  <EllipsisVIcon />
+                  <span
+                    className={`ct-status-card__menu-arrow${isOpen ? " ct-status-card__menu-arrow--open" : ""}`}
+                    aria-hidden="true"
+                  />
                 </MenuToggle>
               )}
             >
               <DropdownList>
-                <DropdownItem
-                  isDisabled={!isVmStopped}
-                  onClick={() => openConfirmActionModal("start")}
-                >
-                  스토리지센터VM 시작
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={!isVmRunning}
-                  onClick={() => openConfirmActionModal("stop")}
-                >
-                  스토리지센터VM 정지
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={isVmRunning}
-                  onClick={() => openConfirmActionModal("delete")}
-                >
-                  스토리지센터VM 삭제
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={isVmRunning}
-                  onClick={openResourceUpdateModal}
-                >
-                  스토리지센터VM 자원변경
-                </DropdownItem>
-                <DropdownItem
-                  isDisabled={!isVmRunning}
-                  onClick={() => openConfirmActionModal("connect")}
-                >
-                  스토리지센터VM 연결
-                </DropdownItem>
+                <DropdownGroup label="VM 제어" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={!isVmStopped}
+                    onClick={() => openConfirmActionModal("start")}
+                  >
+                    스토리지센터VM 시작
+                  </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isVmRunning}
+                    onClick={() => openConfirmActionModal("stop")}
+                  >
+                    스토리지센터VM 정지
+                  </DropdownItem>
+                </DropdownGroup>
+                <DropdownGroup label="관리" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={isVmRunning}
+                    onClick={openResourceUpdateModal}
+                  >
+                    스토리지센터VM 자원변경
+                  </DropdownItem>
+                </DropdownGroup>
+                <DropdownGroup label="VM 관리" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={isVmRunning}
+                    onClick={() => openConfirmActionModal("delete")}
+                  >
+                    스토리지센터VM 삭제
+                  </DropdownItem>
+                </DropdownGroup>
               </DropdownList>
             </Dropdown>
           ),
         }}
       >
-        <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-          <FlexItem>
-            <CardTitle>
-              <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-                <VirtualMachineIcon
-                  style={{ fontSize: "var(--pf-global--icon--FontSize--lg)" }}
-                  aria-hidden="true"
-                />
-                <span>스토리지센터 가상머신 상태</span>
-              </Flex>
-            </CardTitle>
-          </FlexItem>
-        </Flex>
+        <CardTitle>
+          <StatusCardHeading
+            icon={<span className="ct-status-card__emoji" aria-hidden="true">🖥</span>}
+            title="스토리지센터 가상머신 상태"
+            subtitle="Storage Center VM"
+            tone="storage-vm"
+          />
+        </CardTitle>
       </CardHeader>
 
       <CardBody>
-        <DescriptionList isCompact className="ct-status-card__dl">
-          <DescriptionListGroup>
-            <DescriptionListTerm>가상머신 상태</DescriptionListTerm>
-            <DescriptionListDescription>
-              <Label
-                className="ct-health-label"
-                color={statusMeta.color}
-                icon={statusMeta.icon}
-              >
-                {statusMeta.label}
-              </Label>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
+        <InfoGrid>
+          <InfoItem label="가상머신 상태" full>
+            <DotStatus tone={statusMeta.color}>
+              {statusMeta.label}
+            </DotStatus>
+          </InfoItem>
+          <InfoItem label="CPU">{data.cpu}</InfoItem>
+          <InfoItem label="Memory">{data.memory}</InfoItem>
+        </InfoGrid>
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>CPU</DescriptionListTerm>
-            <DescriptionListDescription>{data.cpu}</DescriptionListDescription>
-          </DescriptionListGroup>
+        <UsageProgress
+          label="ROOT Disk 사용량"
+          value={compactDiskUsage(data.rootDiskSize)}
+        />
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>Memory</DescriptionListTerm>
-            <DescriptionListDescription>{data.memory}</DescriptionListDescription>
-          </DescriptionListGroup>
+        <CardDivider />
 
-          <DescriptionListGroup>
-            <DescriptionListTerm>ROOT Disk 크기</DescriptionListTerm>
-            <DescriptionListDescription>{data.rootDiskSize}</DescriptionListDescription>
-          </DescriptionListGroup>
+        <NicGroup
+          title={`관리 NIC - ${nicName(data.manageNicType) || "N/A"}`}
+          items={[
+            { label: "IP", value: stripStatusLabel(data.manageNicIp, "IP") },
+            { label: "PREFIX", value: stripStatusLabel(data.manageNicPrefix, "PREFIX") },
+            { label: "GW", value: stripStatusLabel(data.manageNicGw, "GW") },
+            { label: "DNS", value: stripStatusLabel(data.manageNicDns, "DNS") },
+          ]}
+        />
 
-          <DescriptionListGroup>
-            <DescriptionListTerm className="pf-v5-u-align-self-flex-start">관리 NIC</DescriptionListTerm>
-            <DescriptionListDescription>
-              <Flex direction={{ default: "column" }}>
-                <FlexItem>{data.manageNicType}</FlexItem>
-                <FlexItem>{data.manageNicIp}</FlexItem>
-                <FlexItem>{data.manageNicPrefix}</FlexItem>
-                <FlexItem>{data.manageNicGw}</FlexItem>
-                <FlexItem>{data.manageNicDns}</FlexItem>
-              </Flex>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm className="pf-v5-u-align-self-flex-start">스토리지 NIC</DescriptionListTerm>
-            <DescriptionListDescription>
-              <Flex direction={{ default: "column" }}>
-                <FlexItem>{data.storageServerNicType}</FlexItem>
-                <FlexItem>{data.storageServerNicIp}</FlexItem>
-                <FlexItem>{data.storageReplicationNicType}</FlexItem>
-                <FlexItem>{data.storageReplicationNicIp}</FlexItem>
-              </Flex>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-        </DescriptionList>
+        <NicGroup
+          title={`스토리지 NIC - ${[
+            nicName(data.storageServerNicType),
+            nicName(data.storageReplicationNicType),
+          ].filter(Boolean).join(" / ") || "N/A"}`}
+          items={[
+            {
+              label: "IP (Storage)",
+              value: statusIpWithPrefix(data.storageServerNicIp, ""),
+            },
+            {
+              label: "IP (Repl.)",
+              value: statusIpWithPrefix(data.storageReplicationNicIp, ""),
+            },
+          ]}
+        />
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>

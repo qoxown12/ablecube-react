@@ -214,7 +214,7 @@ export default function MonitoringCenterWizardModal({
               goToNextStep();
             }}
           >
-            다음
+            완료
           </Button>
         </div>
       );
@@ -268,11 +268,13 @@ export default function MonitoringCenterWizardModal({
           onSave={handleClose}
           width="100%"
           navAriaLabel="Wall 모니터링 구성 단계"
-          className={
-            disableNav
-              ? "ct-monitoring-center-wizard ct-monitoring-center-wizard--nav-locked"
-              : "ct-monitoring-center-wizard"
-          }
+          isVisitRequired
+          className={[
+            "ct-monitoring-center-wizard",
+            disableNav ? "ct-monitoring-center-wizard--nav-locked" : "",
+            deployPhase !== "idle" ? "ct-wizard--execution-visible" : "",
+            deployPhase === "done" ? "ct-wizard--complete-visible" : "",
+          ].join(" ")}
           footer={wizardFooter}
           onStepChange={(_event, currentStep) => {
             const stepId = String(currentStep.id);
@@ -571,7 +573,7 @@ export default function MonitoringCenterWizardModal({
             </div>
           </WizardStep>
 
-          <WizardStep name="배포" id="monitoring-deploy">
+          <WizardStep name="구성" id="monitoring-deploy">
             <div className="ct-monitoring-center-wizard__content">
               <Content component="p" className="ct-monitoring-center-wizard__deploy-title">
                 Wall 모니터링센터를 구성 중입니다. 전체 3단계 중 2단계 진행 중입니다.

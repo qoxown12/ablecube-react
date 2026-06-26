@@ -5,33 +5,17 @@ import {
   CardTitle,
   CardBody,
   CardFooter,
-  Label,
-  Flex,
-  FlexItem,
-  DescriptionList,
-  DescriptionListGroup,
-  DescriptionListTerm,
-  DescriptionListDescription,
   Dropdown,
+  DropdownGroup,
   DropdownList,
   DropdownItem,
   MenuToggle,
 } from "@patternfly/react-core";
-import {
-  NetworkIcon,
-  InfoCircleIcon,
-  CheckCircleIcon,
-  ExclamationTriangleIcon,
-  ExclamationCircleIcon,
-  EllipsisVIcon,
-} from "@patternfly/react-icons";
-
 import CloudClusterMigrationModal from "./cloud-cluster-migration-modal";
 import SshPortChangeModal from "./ssh-port-change-modal";
 import {
   STATUS_LOADING_LABEL,
   STATUS_UNKNOWN_LABEL,
-  StatusLoadingIcon,
   StatusLoadingMessage,
 } from "./status-loading";
 import ConfirmActionModal from "../components/common/ConfirmActionModal";
@@ -40,23 +24,26 @@ import {
   CLOUD_CLUSTER_STATUS_FALLBACK,
   fetchCloudClusterStatus,
 } from "../services/api/cloud-cluster-status";
+import {
+  DotStatus,
+  InfoGrid,
+  InfoItem,
+  StatusCardHeading,
+} from "./status-card-layout";
 import "./status-card.scss";
 
 const CLUSTER_STATUS_META = {
   HEALTH_OK: {
     label: "Health OK",
     color: "green",
-    icon: <CheckCircleIcon />,
   },
   HEALTH_WARN: {
     label: "Health Warn",
     color: "orange",
-    icon: <ExclamationTriangleIcon />,
   },
   HEALTH_ERR: {
     label: "Health Err",
     color: "red",
-    icon: <ExclamationCircleIcon />,
   },
 };
 
@@ -64,10 +51,6 @@ type CloudClusterConfirmAction =
   | "start"
   | "stop"
   | "cleanup"
-  | "bootstrap"
-  | "connect"
-  | "monitoringSetup"
-  | "monitoringDashboard"
   | "monitoringConfigUpdate";
 
 const CLOUD_CLUSTER_ACTIONS: Record<
@@ -85,24 +68,6 @@ CloudClusterConfirmAction,
   cleanup: {
     title: "클라우드센터 클러스터 클린업",
     message: "클라우드센터 클러스터를 클린업하시겠습니까?",
-  },
-  bootstrap: {
-    title: "클라우드센터 구성하기",
-    message: "클라우드센터 구성을 진행하시겠습니까?",
-  },
-  connect: {
-    title: "클라우드센터 연결",
-    message: "클라우드센터 관리 화면으로 연결하시겠습니까?",
-    confirmLabel: "연결",
-  },
-  monitoringSetup: {
-    title: "모니터링센터 구성",
-    message: "모니터링센터 구성을 진행하시겠습니까?",
-  },
-  monitoringDashboard: {
-    title: "모니터링센터 대시보드 연결",
-    message: "모니터링센터 대시보드로 연결하시겠습니까?",
-    confirmLabel: "연결",
   },
   monitoringConfigUpdate: {
     title: "모니터링센터 수집 정보 업데이트",
@@ -138,18 +103,16 @@ export default function CloudClusterStatus() {
     ? {
       label: STATUS_LOADING_LABEL,
       color: "orange",
-      icon: <StatusLoadingIcon />,
     }
     : (CLUSTER_STATUS_META as any)[data.clusterStatus] ?? {
       label: STATUS_UNKNOWN_LABEL,
       color: "orange",
-      icon: <InfoCircleIcon />,
     };
 
   const isClusterError = data.clusterStatus === "HEALTH_ERR";
   const isClusterUnknown = data.clusterStatus === "N/A" || data.clusterStatus === "";
   const footerMessage = isCollecting
-    ? "클라우드센터 클러스터 상태 체크 중..."
+    ? "클라우드센터 클러스터 상태를 확인하고 있습니다."
     : isClusterUnknown
     ? "클라우드센터 클러스터 상태 정보를 확인할 수 없습니다."
     : isClusterError
@@ -216,6 +179,7 @@ export default function CloudClusterStatus() {
         actions={{
           actions: (
             <Dropdown
+              className="ct-status-card__dropdown"
               isOpen={isOpen}
               onSelect={onSelect}
               onOpenChange={setIsOpen}
@@ -224,130 +188,88 @@ export default function CloudClusterStatus() {
                 <MenuToggle
                   ref={toggleRef}
                   variant="plain"
-                  aria-label="카드 메뉴"
+                  aria-expanded={isOpen}
+                  aria-label={isOpen ? "카드 메뉴 닫기" : "카드 메뉴 열기"}
                   onClick={() => setIsOpen(!isOpen)}
                 >
-                  <EllipsisVIcon />
+                  <span
+                    className={`ct-status-card__menu-arrow${isOpen ? " ct-status-card__menu-arrow--open" : ""}`}
+                    aria-hidden="true"
+                  />
                 </MenuToggle>
               )}
             >
               <DropdownList>
-                <DropdownItem
-                  isDisabled={!isClusterReady || isCloudVmRunning}
-                  onClick={() => openConfirmActionModal("start")}
-                >
-                  클라우드센터VM 시작
-                </DropdownItem>
+                <DropdownGroup label="VM 제어" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={!isClusterReady || isCloudVmRunning}
+                    onClick={() => openConfirmActionModal("start")}
+                  >
+                    클라우드센터VM 시작
+                  </DropdownItem>
 
-                <DropdownItem
-                  isDisabled={!isClusterReady || !isCloudVmRunning}
-                  onClick={() => openConfirmActionModal("stop")}
-                >
-                  클라우드센터VM 정지
-                </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isClusterReady || !isCloudVmRunning}
+                    onClick={() => openConfirmActionModal("stop")}
+                  >
+                    클라우드센터VM 정지
+                  </DropdownItem>
 
-                <DropdownItem
-                  isDisabled={!isClusterReady}
-                  onClick={() => openConfirmActionModal("cleanup")}
-                >
-                  클라우드센터 클러스터 클린업
-                </DropdownItem>
+                  <DropdownItem
+                    isDisabled={!isClusterReady || !isCloudVmRunning}
+                    onClick={openMigrationModal}
+                  >
+                    클라우드센터VM 마이그레이션
+                  </DropdownItem>
+                </DropdownGroup>
 
-                <DropdownItem
-                  isDisabled={!isClusterReady || !isCloudVmRunning}
-                  onClick={openMigrationModal}
-                >
-                  클라우드센터VM 마이그레이션
-                </DropdownItem>
+                <DropdownGroup label="클러스터 관리" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={!isClusterReady}
+                    onClick={() => openConfirmActionModal("cleanup")}
+                  >
+                    클라우드센터 클러스터 클린업
+                  </DropdownItem>
 
-                <DropdownItem onClick={openSshPortChangeModal}>
-                  SSH Port 변경
-                </DropdownItem>
+                  <DropdownItem onClick={openSshPortChangeModal}>
+                    SSH Port 변경
+                  </DropdownItem>
+                </DropdownGroup>
 
-                <DropdownItem
-                  isDisabled={isClusterReady}
-                  onClick={() => openConfirmActionModal("bootstrap")}
-                >
-                  클라우드센터 구성하기
-                </DropdownItem>
-
-                <DropdownItem
-                  isDisabled={!isClusterReady}
-                  onClick={() => openConfirmActionModal("connect")}
-                >
-                  클라우드센터 연결
-                </DropdownItem>
-
-                <DropdownItem
-                  isDisabled={!isClusterReady}
-                  onClick={() => openConfirmActionModal("monitoringSetup")}
-                >
-                  모니터링센터 구성
-                </DropdownItem>
-
-                <DropdownItem
-                  isDisabled={!isClusterReady}
-                  onClick={() => openConfirmActionModal("monitoringDashboard")}
-                >
-                  모니터링센터 대시보드 연결
-                </DropdownItem>
-
-                <DropdownItem
-                  isDisabled={!isClusterReady}
-                  onClick={() => openConfirmActionModal("monitoringConfigUpdate")}
-                >
-                  모니터링센터 수집 정보 업데이트
-                </DropdownItem>
+                <DropdownGroup label="모니터링" className="ct-status-card__menu-group">
+                  <DropdownItem
+                    isDisabled={!isClusterReady}
+                    onClick={() => openConfirmActionModal("monitoringConfigUpdate")}
+                  >
+                    모니터링센터 수집 정보 업데이트
+                  </DropdownItem>
+                </DropdownGroup>
               </DropdownList>
             </Dropdown>
           ),
         }}
       >
-        <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-          <FlexItem>
-            <CardTitle>
-              <Flex alignItems={{ default: "alignItemsCenter" }} gap={{ default: "gapSm" }}>
-                <NetworkIcon
-                  style={{ fontSize: "var(--pf-global--icon--FontSize--lg)" }}
-                  aria-hidden="true"
-                />
-                <span>클라우드센터 클러스터 상태</span>
-              </Flex>
-            </CardTitle>
-          </FlexItem>
-        </Flex>
+        <CardTitle>
+          <StatusCardHeading
+            icon={<span className="ct-status-card__emoji" aria-hidden="true">☁</span>}
+            title="클라우드센터 클러스터 상태"
+            subtitle="Mold Cluster"
+            tone="cloud"
+          />
+        </CardTitle>
       </CardHeader>
 
       <CardBody>
-        <DescriptionList isCompact className="ct-status-card__dl">
-          <DescriptionListGroup>
-            <DescriptionListTerm>클러스터 상태</DescriptionListTerm>
-            <DescriptionListDescription>
-              <Label
-                className="ct-health-label"
-                color={statusMeta.color}
-                icon={statusMeta.icon}
-              >
+        <InfoGrid>
+          <InfoItem label="클러스터 상태">
+              <DotStatus tone={statusMeta.color}>
                 {statusMeta.label}
-              </Label>
-            </DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>노드구성</DescriptionListTerm>
-            <DescriptionListDescription>{data.nodeStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>리소스 상태</DescriptionListTerm>
-            <DescriptionListDescription>{data.resourceStatus}</DescriptionListDescription>
-          </DescriptionListGroup>
-
-          <DescriptionListGroup>
-            <DescriptionListTerm>VM실행노드</DescriptionListTerm>
-            <DescriptionListDescription>{data.executionNode}</DescriptionListDescription>
-          </DescriptionListGroup>
-        </DescriptionList>
+              </DotStatus>
+          </InfoItem>
+          <InfoItem label="리소스 상태">{data.resourceStatus}</InfoItem>
+          <InfoItem label="노드 구성" full mono>{data.nodeStatus}</InfoItem>
+          <InfoItem label="VM 실행노드" mono>{data.executionNode}</InfoItem>
+        </InfoGrid>
       </CardBody>
 
       <CardFooter className="ct-status-card__footer" style={{ color: footerColor }}>

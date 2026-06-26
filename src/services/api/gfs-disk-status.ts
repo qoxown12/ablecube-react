@@ -8,6 +8,10 @@ export interface GfsDiskMountInfo {
   physicalVolume: string;
   volumeGroup: string;
   diskSize: string;
+  totalCapacity: string;
+  usedCapacity: string;
+  availableCapacity: string;
+  usagePercentage: string;
   resourceStatus: string[];
 }
 
@@ -23,6 +27,26 @@ interface GfsDiskBlockDevice {
   lvm?: string;
   mountpoint?: string;
   size?: string;
+  disk_size?: string;
+  total?: string;
+  total_capacity?: string;
+  capacity?: string;
+  used?: string;
+  used_capacity?: string;
+  used_size?: string;
+  available?: string;
+  available_capacity?: string;
+  avail?: string;
+  avail_capacity?: string;
+  free?: string;
+  free_capacity?: string;
+  usage_percentage?: string;
+  use_percent?: string;
+  usagePercent?: string;
+  used_percentage?: string;
+  used_percent?: string;
+  use_rate?: string;
+  usage_rate?: string;
   multipaths?: string[];
   devices?: string[];
   disk_id?: string[];
@@ -106,6 +130,91 @@ function formatSize(size: string | undefined): string {
   return normalizedSize;
 }
 
+function firstKnownValue(...values: Array<string | undefined>): string | undefined {
+  return values
+    .map((value) => value?.trim())
+    .find((value): value is string => Boolean(value) && value.toUpperCase() !== "N/A");
+}
+
+function formatPercent(value: string | undefined): string {
+  const normalizedValue = value?.trim();
+
+  if (!normalizedValue) {
+    return "N/A";
+  }
+
+  const numericMatch = normalizedValue.match(/^(\d+(?:\.\d+)?)$/);
+
+  if (numericMatch) {
+    return `${numericMatch[1]}%`;
+  }
+
+  return normalizedValue;
+}
+
+function parseSizeBytes(value: string | undefined): number | null {
+  const normalizedValue = value?.trim();
+
+  if (!normalizedValue || normalizedValue.toUpperCase() === "N/A") {
+    return null;
+  }
+
+  const match = normalizedValue.match(/^(\d+(?:\.\d+)?)\s*([kmgtpe]?i?b?|bytes?)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase().replace(/bytes?/, "b");
+  const normalizedUnit = unit === "" || unit === "b" ? "b" : unit;
+  const multipliers: Record<string, number> = {
+    b: 1,
+    k: 1024,
+    kb: 1024,
+    kib: 1024,
+    m: 1024 ** 2,
+    mb: 1024 ** 2,
+    mib: 1024 ** 2,
+    g: 1024 ** 3,
+    gb: 1024 ** 3,
+    gib: 1024 ** 3,
+    t: 1024 ** 4,
+    tb: 1024 ** 4,
+    tib: 1024 ** 4,
+    p: 1024 ** 5,
+    pb: 1024 ** 5,
+    pib: 1024 ** 5,
+    e: 1024 ** 6,
+    eb: 1024 ** 6,
+    eib: 1024 ** 6,
+  };
+  const multiplier = multipliers[normalizedUnit];
+
+  if (!Number.isFinite(amount) || !multiplier) {
+    return null;
+  }
+
+  return amount * multiplier;
+}
+
+function deriveUsagePercentage(used: string | undefined, total: string | undefined, available: string | undefined): string {
+  const usedBytes = parseSizeBytes(used);
+  const totalBytes = parseSizeBytes(total);
+
+  if (usedBytes !== null && totalBytes !== null && totalBytes > 0) {
+    return `${Math.round((usedBytes / totalBytes) * 100)}%`;
+  }
+
+  const availableBytes = parseSizeBytes(available);
+
+  if (usedBytes !== null && availableBytes !== null && usedBytes + availableBytes > 0) {
+    return `${Math.round((usedBytes / (usedBytes + availableBytes)) * 100)}%`;
+  }
+
+  return "N/A";
+}
+
 function uniqueValues(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
@@ -167,6 +276,35 @@ function mapBlockDevice(
 ): GfsDiskMountInfo {
   const lvm = blockDevice.lvm?.trim() || "N/A";
   const mountPath = blockDevice.mountpoint?.trim() || "N/A";
+  const totalCapacity = formatSize(firstKnownValue(
+    blockDevice.total,
+    blockDevice.total_capacity,
+    blockDevice.capacity,
+    blockDevice.disk_size,
+    blockDevice.size
+  ));
+  const usedCapacity = formatSize(firstKnownValue(
+    blockDevice.used,
+    blockDevice.used_capacity,
+    blockDevice.used_size
+  ));
+  const availableCapacity = formatSize(firstKnownValue(
+    blockDevice.available,
+    blockDevice.available_capacity,
+    blockDevice.avail,
+    blockDevice.avail_capacity,
+    blockDevice.free,
+    blockDevice.free_capacity
+  ));
+  const usagePercentage = formatPercent(firstKnownValue(
+    blockDevice.usage_percentage,
+    blockDevice.use_percent,
+    blockDevice.usagePercent,
+    blockDevice.used_percentage,
+    blockDevice.used_percent,
+    blockDevice.use_rate,
+    blockDevice.usage_rate
+  ));
 
   return {
     mountPath,
@@ -175,7 +313,13 @@ function mapBlockDevice(
     multipaths: formatList(blockDevice.multipaths),
     physicalVolume: lvm,
     volumeGroup: lvm,
-    diskSize: formatSize(blockDevice.size),
+    diskSize: totalCapacity,
+    totalCapacity,
+    usedCapacity,
+    availableCapacity,
+    usagePercentage: usagePercentage !== "N/A"
+      ? usagePercentage
+      : deriveUsagePercentage(usedCapacity, totalCapacity, availableCapacity),
     resourceStatus: resourceStatusMap.get(mountResourceId(mountPath)) ?? ["N/A"],
   };
 }

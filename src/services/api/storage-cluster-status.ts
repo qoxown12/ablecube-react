@@ -9,6 +9,11 @@ export interface StorageClusterStatusData {
   daemonStatus: string;
   storagePools: string;
   storageCapacity: string;
+  storageTotalCapacity: string;
+  storageUsableCapacity: string;
+  storageAvailableCapacity: string;
+  storageUsedCapacity: string;
+  storageUsagePercentage: string;
   maintenanceStatus: boolean;
   healthChecks: StorageClusterHealthCheck[];
 }
@@ -51,8 +56,26 @@ interface GlueClusterStatusResponse {
   mgr_cnt?: number | string;
   pools?: number | string;
   avail?: string;
+  size?: string;
+  total?: string;
+  total_capacity?: string;
+  raw_total?: string;
+  usable_total?: string;
+  usable_total_capacity?: string;
+  usable?: string;
+  usable_capacity?: string;
   used?: string;
   usage_percentage?: string;
+  replica_size?: number | string;
+  replication_size?: number | string;
+  pool_size?: number | string;
+  rbd_replica_size?: number | string;
+  total_bytes?: number | string;
+  total_capacity_bytes?: number | string;
+  total_avail_bytes?: number | string;
+  usable_total_bytes?: number | string;
+  usable_bytes?: number | string;
+  usable_capacity_bytes?: number | string;
   maintenance_status?: boolean;
   json_raw?: {
     quorum_names?: string[] | string;
@@ -105,9 +128,35 @@ export const STORAGE_CLUSTER_STATUS_FALLBACK: StorageClusterStatusData = {
   daemonStatus: "N/A",
   storagePools: "N/A",
   storageCapacity: "N/A",
+  storageTotalCapacity: "N/A",
+  storageUsableCapacity: "N/A",
+  storageAvailableCapacity: "N/A",
+  storageUsedCapacity: "N/A",
+  storageUsagePercentage: "N/A",
   maintenanceStatus: false,
   healthChecks: [],
 };
+
+const BINARY_SIZE_UNITS: Record<string, number> = {
+  B: 1,
+  K: 1024,
+  KB: 1024,
+  KIB: 1024,
+  M: 1024 ** 2,
+  MB: 1024 ** 2,
+  MIB: 1024 ** 2,
+  G: 1024 ** 3,
+  GB: 1024 ** 3,
+  GIB: 1024 ** 3,
+  T: 1024 ** 4,
+  TB: 1024 ** 4,
+  TIB: 1024 ** 4,
+  P: 1024 ** 5,
+  PB: 1024 ** 5,
+  PIB: 1024 ** 5,
+};
+
+const DEFAULT_STORAGE_REPLICA_SIZE = 2;
 
 function normalizeValue(value: number | string | undefined): string | null {
   if (value === undefined || value === null) {
@@ -141,6 +190,154 @@ function normalizeStringList(value: string[] | string | undefined): string[] {
   return normalizedValue
     ? normalizedValue.split(",").map((item) => item.trim()).filter(Boolean)
     : [];
+}
+
+function parseBinarySizeBytes(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/(-?\d+(?:\.\d+)?)\s*([kmgtp]?i?b?|b)\b/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  const unit = match[2].toUpperCase();
+  const multiplier = BINARY_SIZE_UNITS[unit];
+
+  if (!Number.isFinite(amount) || !multiplier) {
+    return null;
+  }
+
+  return amount * multiplier;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return "N/A";
+  }
+
+  const units = [
+    { label: "PiB", value: 1024 ** 5 },
+    { label: "TiB", value: 1024 ** 4 },
+    { label: "GiB", value: 1024 ** 3 },
+    { label: "MiB", value: 1024 ** 2 },
+    { label: "KiB", value: 1024 },
+  ];
+  const selectedUnit = units.find((unit) => bytes >= unit.value) ?? units[units.length - 1];
+  const unitValue = bytes / selectedUnit.value;
+  const precision = unitValue >= 100 ? 1 : 2;
+  const formattedValue = unitValue
+    .toFixed(precision)
+    .replace(/\.0+$/, "")
+    .replace(/(\.\d*[1-9])0+$/, "$1");
+
+  return `${formattedValue} ${selectedUnit.label}`;
+}
+
+function normalizeBytesNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const bytes = Number(value);
+
+  return Number.isFinite(bytes) ? bytes : null;
+}
+
+function normalizeBytesValue(value: unknown): string | null {
+  const bytes = normalizeBytesNumber(value);
+
+  return bytes !== null ? formatBytes(bytes) : null;
+}
+
+function readCapacityValue(
+  response: GlueClusterStatusResponse,
+  textKeys: string[],
+  byteKeys: string[]
+): string | null {
+  const record = response as Record<string, unknown>;
+
+  for (const key of textKeys) {
+    const normalizedValue = normalizeValue(record[key] as string | number | undefined);
+
+    if (normalizedValue) {
+      return normalizedValue;
+    }
+  }
+
+  for (const key of byteKeys) {
+    const normalizedValue = normalizeBytesValue(record[key]);
+
+    if (normalizedValue) {
+      return normalizedValue;
+    }
+  }
+
+  return null;
+}
+
+function readCapacityBytes(
+  response: GlueClusterStatusResponse,
+  textKeys: string[],
+  byteKeys: string[]
+): number | null {
+  const record = response as Record<string, unknown>;
+
+  for (const key of byteKeys) {
+    const normalizedValue = normalizeBytesNumber(record[key]);
+
+    if (normalizedValue !== null) {
+      return normalizedValue;
+    }
+  }
+
+  for (const key of textKeys) {
+    const parsedValue = parseBinarySizeBytes(
+      normalizeValue(record[key] as string | number | undefined)
+    );
+
+    if (parsedValue !== null) {
+      return parsedValue;
+    }
+  }
+
+  return null;
+}
+
+function storageRawTotalBytes(response: GlueClusterStatusResponse): number | null {
+  const explicitTotalBytes = readCapacityBytes(
+    response,
+    ["total", "total_capacity", "raw_total", "size"],
+    ["total_bytes", "total_capacity_bytes"]
+  );
+
+  if (explicitTotalBytes !== null) {
+    return explicitTotalBytes;
+  }
+
+  const availableBytes = parseBinarySizeBytes(normalizeValue(response.avail));
+  const usedBytes = parseBinarySizeBytes(normalizeValue(response.used));
+
+  return availableBytes !== null && usedBytes !== null
+    ? availableBytes + usedBytes
+    : null;
+}
+
+function storageReplicaSize(response: GlueClusterStatusResponse): number {
+  const record = response as Record<string, unknown>;
+  const rawValue = [
+    "replica_size",
+    "replication_size",
+    "pool_size",
+    "rbd_replica_size",
+  ]
+    .map((key) => Number(record[key]))
+    .find((value) => Number.isFinite(value) && value > 0);
+
+  return rawValue ?? DEFAULT_STORAGE_REPLICA_SIZE;
 }
 
 function uniqueValues(values: string[]): string[] {
@@ -238,13 +435,71 @@ function formatUsagePercentage(usagePercentage: string | undefined): string | nu
 }
 
 function formatStorageCapacity(response: GlueClusterStatusResponse): string {
-  const available = normalizeValue(response.avail);
-  const used = normalizeValue(response.used);
+  const total = formatStorageTotalCapacity(response);
+  const available = formatStorageUsableCapacity(response);
+  const used = formatStorageUsedCapacity(response);
   const usagePercentage = formatUsagePercentage(response.usage_percentage);
 
-  return available && used && usagePercentage
-    ? `전체 ${available} 중 ${used} 사용 중 (사용률 ${usagePercentage})`
+  return total && available && used && usagePercentage
+    ? `전체 ${total} 중 ${used} 사용 중 (Usable ${available} / 사용률 ${usagePercentage})`
     : "N/A";
+}
+
+function formatStorageTotalCapacity(response: GlueClusterStatusResponse): string {
+  const explicitTotal = readCapacityValue(
+    response,
+    ["total", "total_capacity", "raw_total", "size"],
+    ["total_bytes", "total_capacity_bytes"]
+  );
+
+  if (explicitTotal) {
+    return explicitTotal;
+  }
+
+  const totalBytes = storageRawTotalBytes(response);
+
+  return totalBytes !== null
+    ? formatBytes(totalBytes)
+    : "N/A";
+}
+
+function formatStorageUsableCapacity(response: GlueClusterStatusResponse): string {
+  const explicitUsable = readCapacityValue(
+    response,
+    ["usable_total", "usable_total_capacity", "usable", "usable_capacity"],
+    ["usable_total_bytes", "usable_bytes", "usable_capacity_bytes"]
+  );
+
+  if (explicitUsable) {
+    return explicitUsable;
+  }
+
+  const totalBytes = storageRawTotalBytes(response);
+  const replicaSize = storageReplicaSize(response);
+
+  return totalBytes !== null
+    ? `${formatBytes(totalBytes / replicaSize)} (${replicaSize}복제 기준)`
+    : "N/A";
+}
+
+function formatStorageUsedCapacity(response: GlueClusterStatusResponse): string {
+  const usedBytes = parseBinarySizeBytes(normalizeValue(response.used));
+
+  if (usedBytes === null) {
+    return "N/A";
+  }
+
+  return formatBytes(usedBytes / storageReplicaSize(response));
+}
+
+function formatStorageAvailableCapacity(response: GlueClusterStatusResponse): string {
+  const availableBytes = parseBinarySizeBytes(normalizeValue(response.avail));
+
+  if (availableBytes === null) {
+    return "N/A";
+  }
+
+  return formatBytes(availableBytes / storageReplicaSize(response));
 }
 
 function formatHealthCheckDetail(detail: GlueHealthCheckDetail | string): string | null {
@@ -296,6 +551,11 @@ function mapGlueClusterStatus(response: GlueClusterStatusResponse): StorageClust
     daemonStatus: formatDaemonStatus(response),
     storagePools: formatStoragePools(response.pools),
     storageCapacity: formatStorageCapacity(response),
+    storageTotalCapacity: formatStorageTotalCapacity(response),
+    storageUsableCapacity: formatStorageUsableCapacity(response),
+    storageAvailableCapacity: formatStorageAvailableCapacity(response),
+    storageUsedCapacity: formatStorageUsedCapacity(response),
+    storageUsagePercentage: formatUsagePercentage(response.usage_percentage) ?? "N/A",
     maintenanceStatus: response.maintenance_status ?? false,
     healthChecks: formatHealthChecks(response.json_raw?.health?.checks),
   };
